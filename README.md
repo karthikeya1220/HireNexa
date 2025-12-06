@@ -1,4 +1,4 @@
-# ATS Application Tracking System
+# HireNexa (Application Tracking System)
 
 This is a modern full-stack application for tracking job applications and managing candidates.
 
