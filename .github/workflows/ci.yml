@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      MONGODB_URI: mongodb://127.0.0.1:27017/ci
+      GEMINI_API_KEY: ci-dummy
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ci-dummy
+      AWS_SECRET_ACCESS_KEY: ci-dummy
+      S3_BUCKET_NAME: ci-dummy
+      FIREBASE_PROJECT_ID: ci-dummy
+      FIREBASE_CLIENT_EMAIL: ci@example.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck (app + server)
+        run: npx tsc --noEmit && npx tsc -p api/tsconfig.json --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build server
+        run: npm run build:server
+
+      - name: Build frontend
+        run: npx next build
