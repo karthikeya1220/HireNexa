@@ -29,7 +29,7 @@ export interface IJob extends Document {
         last_modified_by?: string;
     };
     assigned_recruiters?: string[];
-    candidates?: any[];
+    candidates?: Array<Record<string, unknown>>;
 }
 declare const _default: mongoose.Model<any, {}, {}, {}, any, any>;
 export default _default;

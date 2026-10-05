@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createUserFromAuth = exports.updateUserRole = exports.getAllUsers = exports.updateUser = exports.getCurrentUser = void 0;
 const User_1 = __importDefault(require("../models/User"));
+const errors_1 = require("../utils/errors");
 // Get current user data
 const getCurrentUser = async (req, res) => {
     var _a;
@@ -93,7 +94,7 @@ const updateUser = async (req, res) => {
     }
     catch (error) {
         console.error('Error updating user:', error);
-        if ((error === null || error === void 0 ? void 0 : error.code) === 11000) {
+        if ((0, errors_1.errCode)(error) === 11000) {
             return res.status(409).json({ error: 'A user with that email already exists' });
         }
         return res.status(500).json({ error: 'Failed to update user' });
@@ -187,7 +188,7 @@ const createUserFromAuth = async (req, res) => {
             });
         }
         catch (saveError) {
-            if (saveError.code === 11000) {
+            if ((0, errors_1.errCode)(saveError) === 11000) {
                 const conflictUser = await User_1.default.findOne({ uid });
                 if (conflictUser) {
                     return res.status(200).json({

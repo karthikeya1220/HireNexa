@@ -45,7 +45,7 @@ export interface IResume extends Document {
     filename: string;
     filelink: string;
     fileHash: string;
-    analysis: any;
+    analysis: Record<string, unknown>;
     vendor_id?: string;
     vendor_name?: string;
     uploaded_at: Date;

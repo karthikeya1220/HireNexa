@@ -12,6 +12,7 @@ const client_s3_1 = require("@aws-sdk/client-s3");
 const s3_request_presigner_1 = require("@aws-sdk/s3-request-presigner");
 const uuid_1 = require("uuid");
 const gemini_1 = require("../utils/gemini");
+const errors_1 = require("../utils/errors");
 const User_1 = __importDefault(require("../models/User"));
 // Full resume pipeline, server-side: hash -> duplicate check -> AI analysis
 // -> S3 upload -> signed URL -> save. Replaces the old client-side flow that
@@ -64,11 +65,13 @@ const analyzeAndUpload = async (req, res) => {
             Body: fileBuffer,
             ContentType: file.type,
         }));
-        // Generate a signed URL (valid for 7 days)
+        // Generate a signed URL (valid for 1 hour — primary access is via the
+        // authenticated /resumes/:id/content and /:id/download endpoints; this
+        // link is only a fallback, so it must not be a long-lived capability URL)
         const filelink = await (0, s3_request_presigner_1.getSignedUrl)(AWSConfig_1.s3Client, new client_s3_1.GetObjectCommand({
             Bucket: AWSConfig_1.bucketName,
             Key: s3Key,
-        }), { expiresIn: 604800 });
+        }), { expiresIn: 3600 });
         // Ensure the user record exists
         const user = await User_1.default.findOne({ uid: userId });
         if (!user) {
@@ -100,7 +103,7 @@ const analyzeAndUpload = async (req, res) => {
     }
     catch (error) {
         console.error('Error analyzing and uploading resume:', error);
-        if ((error === null || error === void 0 ? void 0 : error.code) === 11000) {
+        if ((0, errors_1.errCode)(error) === 11000) {
             return res.status(409).json({ error: 'This resume has already been uploaded' });
         }
         return res.status(500).json({ error: 'Failed to save resume' });
@@ -111,7 +114,6 @@ exports.analyzeAndUpload = analyzeAndUpload;
 // by the caller. Shared by /resumes/:id/content, /resumes/:id/download and the
 // job candidate file route.
 const streamResumeToClient = async (res, resume, asDownload) => {
-    var _a;
     const key = `resumes/${resume.user_id}/${resume.filename}`;
     try {
         const object = await AWSConfig_1.s3Client.send(new client_s3_1.GetObjectCommand({ Bucket: AWSConfig_1.bucketName, Key: key }));
@@ -128,7 +130,7 @@ const streamResumeToClient = async (res, resume, asDownload) => {
         return res.status(200).send(Buffer.from(bytes));
     }
     catch (error) {
-        if ((error === null || error === void 0 ? void 0 : error.name) === 'NoSuchKey' || ((_a = error === null || error === void 0 ? void 0 : error.$metadata) === null || _a === void 0 ? void 0 : _a.httpStatusCode) === 404) {
+        if ((0, errors_1.errName)(error) === 'NoSuchKey' || (0, errors_1.errHttpStatus)(error) === 404) {
             return res.status(404).json({ error: 'Resume file not found in storage' });
         }
         console.error('Error streaming resume file:', error);
@@ -153,7 +155,7 @@ const getResumeContent = async (req, res) => {
     }
     catch (error) {
         console.error('Error fetching resume content:', error);
-        if ((error === null || error === void 0 ? void 0 : error.name) === 'CastError') {
+        if ((0, errors_1.errName)(error) === 'CastError') {
             return res.status(400).json({ error: 'Invalid id' });
         }
         return res.status(500).json({ error: 'Failed to fetch resume content' });
@@ -177,7 +179,7 @@ const getResumeDownload = async (req, res) => {
     }
     catch (error) {
         console.error('Error downloading resume:', error);
-        if ((error === null || error === void 0 ? void 0 : error.name) === 'CastError') {
+        if ((0, errors_1.errName)(error) === 'CastError') {
             return res.status(400).json({ error: 'Invalid id' });
         }
         return res.status(500).json({ error: 'Failed to download resume' });

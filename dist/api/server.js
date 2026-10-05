@@ -113,7 +113,6 @@ app.use('/api/vendors', vendor_1.default);
 app.use((req, res) => {
     res.status(404).json({ error: 'Route not found' });
 });
-// Error handling middleware
 app.use((err, req, res, next) => {
     if (res.headersSent) {
         return next(err);

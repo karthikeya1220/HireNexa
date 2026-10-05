@@ -6,12 +6,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const jobController_1 = require("../controllers/jobController");
 const authMiddleware_1 = require("../middlewares/authMiddleware");
+const aiQuota_1 = require("../middlewares/aiQuota");
 const router = express_1.default.Router();
 // CORS is applied once at the server level (api/server.ts) — no per-router layer.
 // Apply authentication middleware to all routes
 router.use(authMiddleware_1.authenticate);
-// AI match analysis (Gemini runs server-side only)
-router.post('/match-analysis', jobController_1.analyzeMatches);
+// AI match analysis (Gemini runs server-side only) — per-user daily quota
+router.post('/match-analysis', aiQuota_1.aiDailyQuota, jobController_1.analyzeMatches);
 // Job routes - accessible by all authenticated users
 router.get('/', jobController_1.getAllJobs);
 // Get all resumes for matching — dumps all users' PII, admin only

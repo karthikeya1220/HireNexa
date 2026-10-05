@@ -3,8 +3,9 @@ interface AuthRequest extends Request {
     user?: {
         uid: string;
         email: string;
+        name?: string;
         role?: string;
-        [key: string]: any;
+        [key: string]: unknown;
     };
 }
 export declare const analyzeAndUpload: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;

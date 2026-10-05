@@ -2,6 +2,7 @@
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
+var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importDefault(require("mongoose"));
 const dotenv_1 = __importDefault(require("dotenv"));
@@ -10,10 +11,8 @@ const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) {
     throw new Error('Please define the MONGODB_URI environment variable');
 }
-let cached = global.mongoose;
-if (!cached) {
-    cached = global.mongoose = { conn: null, promise: null };
-}
+const globalCache = globalThis;
+const cached = (_a = globalCache.mongoose) !== null && _a !== void 0 ? _a : (globalCache.mongoose = { conn: null, promise: null });
 async function connectDB() {
     if (cached.conn) {
         return cached.conn;

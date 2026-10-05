@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteVendor = exports.updateVendor = exports.createVendor = exports.getVendorById = exports.getAllVendors = void 0;
 const Vendor_1 = __importDefault(require("../models/Vendor"));
 const auth_helpers_1 = require("../utils/auth-helpers");
+const errors_1 = require("../utils/errors");
 // Vendors are readable by any authenticated user (shared list), but only the
 // creator or an admin may modify/delete them.
 const assertCanModify = (req, vendor, res) => {
@@ -24,13 +25,12 @@ const getAllVendors = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        // Get query parameters
-        const status = req.query.status;
+        // Get query parameters — must be a plain string, otherwise query-string
+        // operators like ?status[$ne]=x would be executed by MongoDB.
+        const rawStatus = req.query.status;
+        const status = typeof rawStatus === 'string' ? rawStatus : undefined;
         // Build query object
-        const query = {};
-        if (status && status !== 'all') {
-            query.status = status;
-        }
+        const query = status && status !== 'all' ? { status } : {};
         // Find all vendors
         const vendors = await Vendor_1.default.find(query).sort({ created_at: -1 });
         res.status(200).json(vendors);
@@ -87,7 +87,7 @@ const createVendor = async (req, res) => {
     }
     catch (error) {
         console.error('Error creating vendor:', error);
-        if ((error === null || error === void 0 ? void 0 : error.code) === 11000) {
+        if ((0, errors_1.errCode)(error) === 11000) {
             return res.status(409).json({ error: 'Vendor already exists' });
         }
         res.status(500).json({ error: 'Failed to create vendor' });

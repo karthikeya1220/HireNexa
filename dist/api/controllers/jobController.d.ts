@@ -4,8 +4,9 @@ interface AuthRequest extends Request {
     user?: {
         uid: string;
         email: string;
+        name?: string;
         role?: string;
-        [key: string]: any;
+        [key: string]: unknown;
     };
 }
 export declare const getAllJobs: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;

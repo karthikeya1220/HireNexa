@@ -26,11 +26,12 @@ const canAccessJob = (req, job) => {
         return true;
     if (((_b = job === null || job === void 0 ? void 0 : job.metadata) === null || _b === void 0 ? void 0 : _b.created_by_id) && job.metadata.created_by_id === ((_c = req.user) === null || _c === void 0 ? void 0 : _c.uid))
         return true;
-    return Array.isArray(job === null || job === void 0 ? void 0 : job.assigned_recruiters) && job.assigned_recruiters.includes((_d = req.user) === null || _d === void 0 ? void 0 : _d.uid);
+    const uid = (_d = req.user) === null || _d === void 0 ? void 0 : _d.uid;
+    return !!uid && Array.isArray(job === null || job === void 0 ? void 0 : job.assigned_recruiters) && job.assigned_recruiters.includes(uid);
 };
 // Get all jobs
 const getAllJobs = async (req, res) => {
-    var _a;
+    var _a, _b;
     try {
         const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a.uid;
         if (!userId) {
@@ -40,11 +41,18 @@ const getAllJobs = async (req, res) => {
         // operators like ?status[$ne]=x would be executed by MongoDB.
         const rawStatus = req.query.status;
         const status = typeof rawStatus === 'string' ? rawStatus : undefined;
-        // Build query object
-        const query = {};
-        if (status && status !== 'all') {
-            query.status = status;
-        }
+        // Build query: admins see every job; everyone else only sees jobs they
+        // created or were assigned to (same boundary as candidate access).
+        const statusFilter = status && status !== 'all' ? { status } : {};
+        const query = (0, auth_helpers_1.isAdminUser)((_b = req.user) === null || _b === void 0 ? void 0 : _b.role)
+            ? { ...statusFilter }
+            : {
+                $or: [
+                    { 'metadata.created_by_id': userId },
+                    { assigned_recruiters: userId },
+                ],
+                ...statusFilter,
+            };
         // Find all jobs
         const jobs = await Job_1.default.find(query).sort({ created_at: -1 });
         res.status(200).json(jobs);
@@ -376,8 +384,6 @@ const updateCandidateStatus = async (req, res) => {
                 updatedBy: ((_b = req.user) === null || _b === void 0 ? void 0 : _b.email) || 'system'
             };
         }
-        // Get previous status for history
-        const previousStatus = candidate.tracking.status;
         // Update tracking info
         candidate.tracking.status = status;
         candidate.tracking.lastUpdated = new Date();
