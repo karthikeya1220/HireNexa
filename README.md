@@ -284,7 +284,6 @@ You'll also need accounts for:
    # Supabase (backend) — Project Settings > API
    SUPABASE_URL=https://your-project-ref.supabase.co
    SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-   SUPABASE_JWT_SECRET=your_supabase_jwt_secret
 
    # AWS S3
    AWS_ACCESS_KEY_ID=your-access-key
@@ -438,7 +437,6 @@ npm start
    ```bash
    heroku config:set SUPABASE_URL=your-supabase-url
    heroku config:set SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-   heroku config:set SUPABASE_JWT_SECRET=your-jwt-secret
    heroku config:set GEMINI_API_KEY=your-api-key
    # ... add all other variables
    ```
@@ -449,12 +447,12 @@ npm start
 2. Run `supabase/schema.sql` in the SQL Editor
 3. Under Authentication → URL Configuration, set Site URL and add your
    production `/login` redirect URL
-4. Copy the URL, service-role key, and JWT secret into your host's env vars
+4. Copy the URL and service-role key into your host's env vars
 
 ### Environment Variables Checklist
 
 Make sure all these are set in your production environment:
-- ✅ `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`
+- ✅ `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
 - ✅ `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - ✅ `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET_NAME`
 - ✅ `GEMINI_API_KEY`

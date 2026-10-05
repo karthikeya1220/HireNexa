@@ -1,21 +1,47 @@
 import { Request, Response, NextFunction } from 'express';
-import { jwtVerify } from 'jose';
+import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import dotenv from 'dotenv';
 import { supabaseAdmin, PG_UNIQUE_VIOLATION } from '../db';
 
 dotenv.config();
 
+const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/+$/, '');
+// Optional: only consulted for legacy HS256-signed tokens (old projects).
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
 
-if (!SUPABASE_JWT_SECRET && process.env.NODE_ENV === 'production') {
-  console.error('FATAL: SUPABASE_JWT_SECRET must be set (Project Settings > API > JWT Secret)');
+if (!SUPABASE_URL && process.env.NODE_ENV === 'production') {
+  console.error('FATAL: SUPABASE_URL must be set — token verification uses the project JWKS');
   process.exit(1);
 }
-if (!SUPABASE_JWT_SECRET) {
-  console.warn('[AUTH] SUPABASE_JWT_SECRET not set — every request will be rejected with 401');
+if (!SUPABASE_URL) {
+  console.warn('[AUTH] SUPABASE_URL not set — every request will be rejected with 401');
 }
 
-const jwtSecret = new TextEncoder().encode(SUPABASE_JWT_SECRET || 'supabase-jwt-placeholder');
+// Public keys for verifying asymmetric (ES256/RS256) access tokens. jose fetches
+// lazily, caches, and re-fetches when an unknown `kid` shows up (key rotation).
+const jwks = SUPABASE_URL
+  ? createRemoteJWKSet(new URL(`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`), {
+      cacheMaxAge: 10 * 60 * 1000,
+      cooldownDuration: 30 * 1000,
+      timeoutDuration: 5 * 1000,
+    })
+  : null;
+
+const legacyJwtSecret = SUPABASE_JWT_SECRET
+  ? new TextEncoder().encode(SUPABASE_JWT_SECRET)
+  : null;
+
+const verifyToken = (token: string) => {
+  const { alg } = decodeProtectedHeader(token);
+  if (alg === 'HS256') {
+    if (!legacyJwtSecret) {
+      throw new Error('HS256 token received but SUPABASE_JWT_SECRET is not set');
+    }
+    return jwtVerify(token, legacyJwtSecret, { audience: 'authenticated' });
+  }
+  if (!jwks) throw new Error('SUPABASE_URL is not set');
+  return jwtVerify(token, jwks, { audience: 'authenticated', algorithms: ['ES256', 'RS256'] });
+};
 
 // Extend Request to include user data
 export interface AuthenticatedRequest extends Request {
@@ -67,8 +93,8 @@ const createUserRecord = async (uid: string, email: string, name: string): Promi
   }
 };
 
-// Authenticate users with a Supabase access token (signature verified with
-// the project's JWT secret; identity is never trusted from the body).
+// Authenticate users with a Supabase access token (signature verified against
+// the project's published JWKS; identity is never trusted from the body).
 export const authenticate = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const authHeader = req.headers.authorization;
@@ -83,7 +109,7 @@ export const authenticate = async (req: AuthenticatedRequest, res: Response, nex
     let tokenEmail: string;
     let tokenName: string | undefined;
     try {
-      const { payload } = await jwtVerify(idToken, jwtSecret, { audience: 'authenticated' });
+      const { payload } = await verifyToken(idToken);
       if (!payload.sub) throw new Error('Token missing subject');
       uid = payload.sub;
       tokenEmail = typeof payload.email === 'string' ? payload.email : '';

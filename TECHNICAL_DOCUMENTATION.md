@@ -251,8 +251,10 @@ Frontend Request → Add Authorization: Bearer <access token> header
 ```typescript
 // api/middlewares/authMiddleware.ts
 1. Extract token from Authorization header
-2. Verify with jose: jwtVerify(token, SUPABASE_JWT_SECRET, { audience: 'authenticated' })
-   (signature + expiry + audience — stateless, no issuer check)
+2. Verify with jose: jwtVerify(token, projectJwks, { audience: 'authenticated' })
+   (JWKS signature check — asymmetric ES256 + expiry + audience; stateless,
+   no issuer check. JWKS is fetched from SUPABASE_URL/auth/v1/.well-known/jwks.json,
+   cached, and refreshed automatically on key rotation)
 3. Extract uid + email claims
 4. Look up public.users by uid; auto-provision on first request
    (unique-violation race → re-fetch)
@@ -275,7 +277,7 @@ isAdmin middleware:
 
 **Token Security**
 - Supabase access tokens expire (~1 hour); the browser silently refreshes them
-- Tokens are verified on every request (stateless HS256 via `jose`)
+- Tokens are verified on every request (stateless via the project JWKS — ES256 with `jose`)
 - No token storage in cookies (prevents CSRF)
 
 **API Security**
@@ -288,7 +290,7 @@ isAdmin middleware:
 - Row Level Security is deny-by-default — the browser has **no** PostgREST access; only the Express API's service-role client reads/writes
 - Data scoped by uid in every controller query
 - Admin-only routes protected with requireAdmin middleware
-- Service-role key + JWT secret live only in server env vars
+- Service-role key lives only in server env vars; token verification needs no secret (public JWKS)
 
 ### Authentication Code Flow
 
@@ -315,7 +317,7 @@ fetch('/api/resumes', {
 **Backend (Verification)**
 ```typescript
 // api/middlewares/authMiddleware.ts
-const { payload } = await jwtVerify(token, secret, { audience: 'authenticated' });
+const { payload } = await jwtVerify(token, projectJwks, { audience: 'authenticated' });
 const user = await ensureUserRecord(payload.sub, payload.email);
 req.user = user;
 next();
