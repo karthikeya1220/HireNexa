@@ -1,6 +1,4 @@
-import mongoose from 'mongoose';
-import { Document } from 'mongoose';
-import User from '../models/User';
+import User, { IUser } from '../models/User';
 
 /**
  * Database initialization utility that runs on server startup
@@ -21,16 +19,8 @@ export async function initializeDatabase() {
 
 // Define an interface for the duplicate user entry
 interface DuplicateUserEntry {
-  existing: mongoose.Document & {
-    email: string;
-    role: string;
-    save: () => Promise<any>;
-  };
-  duplicate: mongoose.Document & {
-    email: string;
-    role: string;
-    _id: mongoose.Types.ObjectId;
-  };
+  existing: IUser;
+  duplicate: IUser;
 }
 
 /**
@@ -43,13 +33,13 @@ async function checkForDuplicateUsers() {
     console.log(`[DB] Found ${allUsers.length} users in database`);
     
     // Check for email duplicates
-    const emailMap = new Map<string, any>();
+    const emailMap = new Map<string, IUser>();
     const duplicates: DuplicateUserEntry[] = [];
     
     allUsers.forEach(user => {
       if (emailMap.has(user.email)) {
         duplicates.push({ 
-          existing: emailMap.get(user.email), 
+          existing: emailMap.get(user.email)!, 
           duplicate: user 
         });
       } else {

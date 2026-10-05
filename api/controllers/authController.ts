@@ -1,13 +1,15 @@
 import { Request, Response } from 'express';
 import User from '../models/User';
+import { errCode } from '../utils/errors';
 
 // Define interface for authenticated request
 interface AuthRequest extends Request {
   user?: {
     uid: string;
     email: string;
+    name?: string;
     role?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -85,7 +87,7 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
     }
     
     // Update existing user with any provided fields
-    const updateData: any = {};
+    const updateData: { name?: string; email?: string; role?: string; updated_at?: Date } = {};
     if (name) updateData.name = name;
     if (email && typeof email === 'string') updateData.email = email;
     if (role && req.user?.role === 'admin') updateData.role = role; // Only admins can update roles
@@ -111,9 +113,9 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
       name: user.name,
       role: user.role,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error updating user:', error);
-    if (error?.code === 11000) {
+    if (errCode(error) === 11000) {
       return res.status(409).json({ error: 'A user with that email already exists' });
     }
     return res.status(500).json({ error: 'Failed to update user' });
@@ -218,8 +220,8 @@ export const createUserFromAuth = async (req: AuthRequest, res: Response) => {
           role: newUser.role,
         }
       });
-    } catch (saveError: any) {
-      if (saveError.code === 11000) {
+    } catch (saveError) {
+      if (errCode(saveError) === 11000) {
         const conflictUser = await User.findOne({ uid });
         if (conflictUser) {
           return res.status(200).json({

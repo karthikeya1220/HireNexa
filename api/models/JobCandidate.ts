@@ -30,7 +30,7 @@ export interface IStatusHistoryEntry {
   status: string;
   timestamp: Date;
   updatedBy: string;
-  additionalData?: any;
+  additionalData?: Record<string, unknown>;
 }
 
 export interface ITracking {
@@ -42,7 +42,7 @@ export interface ITracking {
   interviewDate?: string;
   contactedDate?: string;
   notes?: string;
-  additionalData?: any;
+  additionalData?: Record<string, unknown>;
 }
 
 export interface ICandidate extends Document {

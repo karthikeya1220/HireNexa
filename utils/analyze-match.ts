@@ -3,14 +3,14 @@ import apiClient from "../lib/api-client";
 // Thin client wrappers: Gemini is called server-side only (see
 // api/utils/gemini.ts) — the API key never reaches the browser.
 
-export async function analyzeMatch(job: any, resume: any) {
-  try {
-    const results = (await apiClient.jobs.analyzeMatches(job, [resume])) as any[];
-    return results?.[0] ?? null;
-  } catch (error) {
-    console.error("Error in match analysis:", error);
-    return null;
-  }
+export interface MatchAnalysis {
+  filename: string;
+  matchPercentage: number;
+  matchingSkills?: string[];
+  missingRequirements?: string[];
+  experienceMatch?: boolean;
+  educationMatch?: boolean;
+  overallAssessment?: string;
 }
 
 /**
@@ -21,10 +21,13 @@ export async function analyzeMatch(job: any, resume: any) {
  * @param resumes Array of resume data
  * @returns Array of resumes with match analysis
  */
-export const analyzeBatchMatches = async (jobData: any, resumes: any[]) => {
+export const analyzeBatchMatches = async (
+  jobData: unknown,
+  resumes: unknown[]
+): Promise<MatchAnalysis[]> => {
   try {
     const batchSize = 5;
-    const results: any[] = [];
+    const results: MatchAnalysis[] = [];
 
     for (let i = 0; i < resumes.length; i += batchSize) {
       const batch = resumes.slice(i, i + batchSize);
@@ -32,7 +35,7 @@ export const analyzeBatchMatches = async (jobData: any, resumes: any[]) => {
         const batchResults = (await apiClient.jobs.analyzeMatches(
           jobData,
           batch
-        )) as any[];
+        )) as MatchAnalysis[];
 
         if (Array.isArray(batchResults)) {
           results.push(...batchResults);

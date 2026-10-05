@@ -11,7 +11,7 @@ interface UserProfileResponse {
   uid: string;
   email: string;
   role: string;
-  [key: string]: any; // Allow other properties
+  [key: string]: unknown; // Allow other properties
 }
 
 interface AuthContextType {
@@ -72,7 +72,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error("Error refreshing user profile:", error);
       
       // Only try to create the user if we got a 404 (user doesn't exist yet)
-      if ((error as any).status === 404) {
+      if ((error as { status?: number }).status === 404) {
         try {
           console.log("Creating user profile after 404");
           const userData = {
@@ -87,7 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.log("User record created:", result);
           
           if (result) {
-            setUserProfile(result as UserProfile);
+            setUserProfile(result as unknown as UserProfile);
             const hasAdminRole = result.role === 'admin';
             setIsAdmin(hasAdminRole);
             console.log("Created user admin status:", hasAdminRole);
@@ -143,7 +143,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const response = await apiClient.auth.getCurrentUser();
           const userData = response as UserProfileResponse;
           if (isMounted) {
-            setUserProfile(userData as UserProfile);
+            setUserProfile(userData as unknown as UserProfile);
             setIsAdmin(userData?.role === 'admin');
             initialLoadAttempted.current = true;
             setLoading(false);
@@ -152,7 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.error("Error fetching user profile:", error);
           
           // If user doesn't exist in database, create them
-          if ((error as any).status === 404) {
+          if ((error as { status?: number }).status === 404) {
             try {
               await createUserRecord(authUser);
               
@@ -164,7 +164,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   const response = await apiClient.auth.getCurrentUser();
                   const newUserData = response as UserProfileResponse;
                   if (isMounted) {
-                    setUserProfile(newUserData as UserProfile);
+                    setUserProfile(newUserData as unknown as UserProfile);
                     setIsAdmin(newUserData?.role === 'admin');
                   }
                 } catch (retryError) {

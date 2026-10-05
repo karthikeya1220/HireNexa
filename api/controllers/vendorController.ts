@@ -1,19 +1,25 @@
 import { Request, Response } from 'express';
-import Vendor from '../models/Vendor';
+import Vendor, { type IVendor } from '../models/Vendor';
 import { canModifyResource } from '../utils/auth-helpers';
+import { errCode } from '../utils/errors';
 
 interface AuthRequest extends Request {
   user?: {
     uid: string;
     email: string;
+    name?: string;
     role?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
 // Vendors are readable by any authenticated user (shared list), but only the
 // creator or an admin may modify/delete them.
-const assertCanModify = (req: AuthRequest, vendor: any, res: Response): boolean => {
+const assertCanModify = (
+  req: AuthRequest,
+  vendor: Pick<IVendor, 'metadata'> | null | undefined,
+  res: Response
+): boolean => {
   if (!canModifyResource(req.user?.uid, vendor?.metadata?.created_by_id, req.user?.role)) {
     res.status(403).json({ error: 'Not authorized to modify this vendor' });
     return false;
@@ -30,14 +36,13 @@ export const getAllVendors = async (req: AuthRequest, res: Response) => {
       return res.status(401).json({ error: 'User not authenticated' });
     }
 
-    // Get query parameters
-    const status = req.query.status as string;
+    // Get query parameters — must be a plain string, otherwise query-string
+    // operators like ?status[$ne]=x would be executed by MongoDB.
+    const rawStatus = req.query.status;
+    const status = typeof rawStatus === 'string' ? rawStatus : undefined;
     
     // Build query object
-    const query: any = {};
-    if (status && status !== 'all') {
-      query.status = status;
-    }
+    const query = status && status !== 'all' ? { status } : {};
     
     // Find all vendors
     const vendors = await Vendor.find(query).sort({ created_at: -1 });
@@ -99,7 +104,7 @@ export const createVendor = async (req: AuthRequest, res: Response) => {
     res.status(201).json(vendor);
   } catch (error) {
     console.error('Error creating vendor:', error);
-    if ((error as any)?.code === 11000) {
+    if (errCode(error) === 11000) {
       return res.status(409).json({ error: 'Vendor already exists' });
     }
     res.status(500).json({ error: 'Failed to create vendor' });

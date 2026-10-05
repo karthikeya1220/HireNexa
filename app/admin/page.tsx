@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useRef } from "react"
+import { useCallback, useEffect, useState, useRef } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ChevronRight, Loader2, Users, Server, FileText, Building, Briefcase, Shield, RefreshCw } from "lucide-react"
@@ -45,7 +45,7 @@ export default function AdminPage() {
   const initialCheckRef = useRef(false);
 
   // Define all hooks first, before any conditional returns
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     if (!userProfile || userProfile.role !== 'admin' || isLoadingStats) {
       return;
     }
@@ -138,9 +138,9 @@ export default function AdminPage() {
     } finally {
       setIsLoadingStats(false);
     }
-  };
+  }, [userProfile, isLoadingStats, toast]);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     if (!userProfile || userProfile.role !== 'admin' || isLoadingUsers) {
       return;
     }
@@ -170,7 +170,7 @@ export default function AdminPage() {
     } finally {
       setIsLoadingUsers(false);
     }
-  };
+  }, [userProfile, isLoadingUsers, toast]);
 
   useEffect(() => {
     if (!initialCheckRef.current && userProfile === null) {
@@ -187,7 +187,7 @@ export default function AdminPage() {
     if (activeTab === 'dashboard' && !dataLoaded && !isLoadingStats) {
       fetchStats();
     }
-  }, [activeTab, userProfile, dataLoaded, isLoadingStats]);
+  }, [activeTab, userProfile, dataLoaded, isLoadingStats, fetchStats]);
 
   useEffect(() => {
     if (userProfile?.role !== 'admin') return;
@@ -196,7 +196,7 @@ export default function AdminPage() {
     if (activeTab === 'users' && !isLoadingUsers && users.length === 0) {
       fetchUsers();
     }
-  }, [activeTab, userProfile, users.length, isLoadingUsers]);
+  }, [activeTab, userProfile, users.length, isLoadingUsers, fetchUsers]);
 
   const handleTabChange = (value: string) => {
     setActiveTab(value);

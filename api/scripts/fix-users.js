@@ -85,27 +85,6 @@ const fixDuplicateUsers = async () => {
   }
 };
 
-// Function to force a user to be admin
-const makeUserAdmin = async (email) => {
-  try {
-    // Find the user by email
-    const user = await User.findOne({ email });
-    
-    if (user) {
-      // Update to admin role
-      await User.updateOne(
-        { email },
-        { $set: { role: 'admin', updated_at: new Date() } }
-      );
-      console.log(`User ${email} has been made admin`);
-    } else {
-      console.log(`User ${email} not found`);
-    }
-  } catch (error) {
-    console.error(`Error making user admin:`, error);
-  }
-};
-
 // Main function
 const main = async () => {
   // Connect to MongoDB
@@ -123,10 +102,6 @@ const main = async () => {
   users.forEach(user => {
     console.log(`- ${user.email} (${user.uid}), role: ${user.role}`);
   });
-
-  // Make specific user admin if needed
-  // Uncomment and add email to make admin
-  // await makeUserAdmin('your.email@example.com');
 
   // Disconnect from MongoDB
   await mongoose.disconnect();

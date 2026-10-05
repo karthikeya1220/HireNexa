@@ -8,6 +8,33 @@ if (!apiKey) {
 
 const genAI = new GoogleGenerativeAI(apiKey);
 
+// Shape of the JSON Gemini returns for a resume (extra fields preserved).
+export type ResumeAnalysis = {
+  name?: string;
+  Name?: string;
+  phone_number?: string;
+  email?: string;
+  key_skills?: string[];
+  skills?: string[];
+  education_details?: unknown[];
+  work_experience_details?: unknown[];
+  [key: string]: unknown;
+};
+
+// Shape of a match-analysis result. `filename` is attached by the batch
+// processor so callers can map results back to source resumes.
+export type MatchAnalysis = {
+  matchPercentage?: number;
+  matchingSkills?: string[];
+  missingRequirements?: string[];
+  experienceMatch?: boolean;
+  educationMatch?: boolean;
+  overallAssessment?: string;
+  filename?: string;
+};
+
+type ResumeLike = { filename?: string } & Record<string, unknown>;
+
 // Extract the first JSON object from a model response (handles ```json fences).
 const extractJson = (text: string): string | null => {
   const fenced = text.match(/```json\s*([\s\S]*?)\s*```/);
@@ -21,7 +48,7 @@ const extractJson = (text: string): string | null => {
 export const analyzeResumeBuffer = async (
   fileBuffer: Buffer,
   mimeType: string = 'application/pdf'
-): Promise<any> => {
+): Promise<ResumeAnalysis> => {
   const model = genAI.getGenerativeModel({
     model: 'gemini-1.5-pro',
     generationConfig: {
@@ -74,7 +101,7 @@ export const analyzeResumeBuffer = async (
     .replace(/```\n?$/, '')
     .trim();
 
-  let analysisJson: any;
+  let analysisJson: ResumeAnalysis;
   try {
     analysisJson = JSON.parse(cleanResponse);
   } catch (parseError) {
@@ -104,7 +131,7 @@ export const analyzeResumeBuffer = async (
 
 // Score a single resume against a job. Returns null on failure (parity with
 // the previous client-side implementation, which never threw).
-export const analyzeMatch = async (job: any, resume: any): Promise<any | null> => {
+export const analyzeMatch = async (job: unknown, resume: unknown): Promise<MatchAnalysis | null> => {
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
 
@@ -159,12 +186,12 @@ export const analyzeMatch = async (job: any, resume: any): Promise<any | null> =
 // Process a batch of resumes against a job description, in batches of 5 to
 // stay within API rate limits. Results keep the source resume's filename.
 export const analyzeBatchMatches = async (
-  jobData: any,
-  resumes: any[]
-): Promise<any[]> => {
+  jobData: unknown,
+  resumes: ResumeLike[]
+): Promise<MatchAnalysis[]> => {
   try {
     const batchSize = 5;
-    const results: any[] = [];
+    const results: MatchAnalysis[] = [];
 
     for (let i = 0; i < resumes.length; i += batchSize) {
       const batch = resumes.slice(i, i + batchSize);
@@ -174,11 +201,11 @@ export const analyzeBatchMatches = async (
         );
 
         const validResults = batchResults
-          .map((result, index) => {
+          .map((result, index): MatchAnalysis | null => {
             if (!result) return null;
             return { ...result, filename: batch[index].filename };
           })
-          .filter((result) => result !== null);
+          .filter((result): result is MatchAnalysis => result !== null);
 
         results.push(...validResults);
       } catch (batchError) {

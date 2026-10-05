@@ -91,7 +91,13 @@ app.use((req: Request, res: Response) => {
 });
 
 // Error handling middleware
-app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+type MiddlewareError = Error & {
+  type?: string;
+  code?: number | string;
+  status?: number;
+  statusCode?: number;
+};
+app.use((err: MiddlewareError, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {
     return next(err);
   }

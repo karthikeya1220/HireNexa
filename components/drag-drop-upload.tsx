@@ -13,7 +13,7 @@ import { Upload, FileText, X, FileUp, CloudUpload, Clock, Trash2 } from "lucide-
 import { useAuth } from "@/context/auth-context"
 import { generateUUID } from "@/utils/generate-id"
 import { useToast } from "@/hooks/use-toast"
-import { analyzeResume } from "@/utils/analyze-resume"
+import { analyzeResume, type AnalysisResult } from "@/utils/analyze-resume"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import apiClient from "@/lib/api-client"
 import { useTheme } from "next-themes"
@@ -32,58 +32,6 @@ interface ResumeQueueItem {
   vendorName?: string | null
   uploadedAt: Date
   fileHash?: string
-}
-
-// Add this type definition at the top of the file
-type AnalysisResult = {
-  skills: string[]
-  name: string
-  phone_number: string
-  email: string
-
-  social_profile_links: {
-    linkedin?: string
-    github?: string
-  }
-  education: Array<{
-    institution: string
-    degree: string
-    major: string
-    location: string
-    dates: string
-  }>
-  work_experience: Array<{
-    company: string
-    title: string
-    location: string
-    dates: string
-    responsibilities: string[]
-  }>
-  key_skills: {
-    languages: string[]
-    frameworks_and_libraries: string[]
-    databases_and_orm: string[]
-    developer_tools: string[]
-    cloud_and_services: string[]
-    coursework: string[]
-  }
-  project_experience: Array<{
-    name: string
-    technologies: string[]
-    link: string
-    description: string[]
-  }>
-  profile_summary: string | null
-  vendor_id?: string
-  vendor_name?: string
-  vendor_details?: {
-    address?: string
-    contact_person?: string
-    country?: string
-    email?: string
-    phone?: string
-    state?: string
-  }
 }
 
 // Add this interface near the top of the file with other type definitions

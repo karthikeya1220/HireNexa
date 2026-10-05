@@ -30,7 +30,7 @@ export interface IJob extends Document {
     last_modified_by?: string;
   };
   assigned_recruiters?: string[];
-  candidates?: any[];
+  candidates?: Array<Record<string, unknown>>;
 }
 
 const JobSchema = new Schema<IJob>(
