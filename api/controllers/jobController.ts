@@ -1,13 +1,14 @@
 import { Request, Response } from 'express';
-import mongoose from 'mongoose';
-import Job, { type IJob } from '../models/Job';
-import JobCandidate, {
+import { supabaseAdmin, isUuid, httpStatusForDbError } from '../db';
+import { type IJob, type JobRow, toJob } from '../models/Job';
+import {
   type IEducation,
   type IMatchAnalysis,
   type ITracking,
   type IWorkExperience,
+  type JobCandidateRow,
+  toCandidate,
 } from '../models/JobCandidate';
-import Resume from '../models/Resume';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { canModifyResource, isAdminUser } from '../utils/auth-helpers';
 import { analyzeBatchMatches } from '../utils/gemini';
@@ -30,6 +31,23 @@ const ALLOWED_CANDIDATE_STATUSES = new Set([
   'not_interested', 'rate_confirmed', 'interview_scheduled', 'approved', 'disapproved'
 ]);
 
+// Columns the client may write on jobs (everything else is server-owned).
+const JOB_WRITABLE_COLUMNS = [
+  'title', 'company', 'location', 'description', 'employment_type',
+  'experience_required', 'salary_range', 'status', 'requirements', 'benefits',
+  'skills_required', 'nice_to_have_skills', 'working_hours', 'mode_of_work',
+  'deadline', 'key_responsibilities', 'about_company', 'total_applications',
+  'shortlisted', 'rejected', 'in_progress', 'assigned_recruiters', 'candidates',
+] as const;
+
+const pickJobFields = (body: Record<string, unknown> | undefined): Record<string, unknown> => {
+  const out: Record<string, unknown> = {};
+  for (const key of JOB_WRITABLE_COLUMNS) {
+    if (body && key in body) out[key] = body[key];
+  }
+  return out;
+};
+
 // Job access: admins, the job creator, or recruiters assigned to the job.
 // Used by every candidate read/write endpoint (previously any authenticated
 // user could read/overwrite any job's pipeline).
@@ -43,38 +61,44 @@ const canAccessJob = (
   return !!uid && Array.isArray(job?.assigned_recruiters) && job.assigned_recruiters.includes(uid);
 };
 
+// Fetch one job by id (returns null for missing or malformed ids — Postgres
+// rejects non-uuid params before they hit the table).
+const findJobById = async (id: string): Promise<IJob | null> => {
+  if (!isUuid(id)) return null;
+  const { data, error } = await supabaseAdmin.from('jobs').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data ? toJob(data as JobRow) : null;
+};
 
 // Get all jobs
 export const getAllJobs = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.uid;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
 
-    // Get query parameters — must be a plain string, otherwise query-string
-    // operators like ?status[$ne]=x would be executed by MongoDB.
+    // Get query parameters — must be a plain string.
     const rawStatus = req.query.status;
     const status = typeof rawStatus === 'string' ? rawStatus : undefined;
-    
-    // Build query: admins see every job; everyone else only sees jobs they
-    // created or were assigned to (same boundary as candidate access).
-    const statusFilter = status && status !== 'all' ? { status } : {};
-    const query = isAdminUser(req.user?.role)
-      ? { ...statusFilter }
-      : {
-          $or: [
-            { 'metadata.created_by_id': userId },
-            { assigned_recruiters: userId },
-          ],
-          ...statusFilter,
-        };
-    
-    // Find all jobs
-    const jobs = await Job.find(query).sort({ created_at: -1 });
-    
-    res.status(200).json(jobs);
+
+    // Admins see every job; everyone else only sees jobs they created or
+    // were assigned to (same boundary as candidate access).
+    let query = supabaseAdmin.from('jobs').select('*');
+    if (!isAdminUser(req.user?.role)) {
+      query = query.or(
+        `metadata->>created_by_id.eq.${userId},assigned_recruiters.cs.{${userId}}`
+      );
+    }
+    if (status && status !== 'all') {
+      query = query.eq('status', status);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) throw error;
+
+    res.status(200).json((data ?? []).map((row) => toJob(row as JobRow)));
   } catch (error) {
     console.error('Error fetching jobs:', error);
     res.status(500).json({ error: 'Failed to fetch jobs' });
@@ -86,17 +110,17 @@ export const getJobById = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const userId = req.user?.uid;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
-    
-    const job = await Job.findById(id);
-    
+
+    const job = await findJobById(id);
+
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
-    
+
     res.status(200).json(job);
   } catch (error) {
     console.error('Error fetching job:', error);
@@ -109,28 +133,34 @@ export const createJob = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.uid;
     const userEmail = req.user?.email;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
-    
-    // Create new job with metadata — never let the client set _id or ownership
-    const { _id, ...bodyFields } = req.body || {};
+
+    // Create new job with metadata — never let the client set identity fields
     const jobData = {
-      ...bodyFields,
+      ...pickJobFields(req.body),
       metadata: {
         created_by: userEmail,
         created_by_id: userId,
         last_modified_by: userEmail,
-      }
+      },
     };
-    
-    const job = new Job(jobData);
-    await job.save();
-    
-    res.status(201).json(job);
+
+    const { data: job, error } = await supabaseAdmin
+      .from('jobs')
+      .insert(jobData)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    res.status(201).json(toJob(job as JobRow));
   } catch (error) {
     console.error('Error creating job:', error);
+    if (httpStatusForDbError(error) === 400) {
+      return res.status(400).json({ error: 'Invalid job data' });
+    }
     res.status(500).json({ error: 'Failed to create job' });
   }
 };
@@ -142,37 +172,51 @@ export const updateJob = async (req: AuthRequest, res: Response) => {
     const userId = req.user?.uid;
     const userEmail = req.user?.email;
     const userRole = req.user?.role;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
-    
-    const job = await Job.findById(id);
-    
+
+    const job = await findJobById(id);
+
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
-    
+
     // Check if user can modify this job
     const isAuthorized = isAdminUser(userRole) || canModifyResource(userId, job.metadata?.created_by_id);
-    
+
     if (!isAuthorized) {
       return res.status(403).json({ error: 'Not authorized to update this job' });
     }
-    
-    // Update job data — strip identity/ownership fields the client must not
-    // control (mixed `metadata` object + dotted path broke updates before).
-    const { _id, metadata, created_at, updated_at, ...updateFields } = req.body || {};
+
+    // Update job data — identity/ownership fields are server-owned; ownership
+    // metadata is merged (never replaced) like the old dotted-path update.
     const updatedJobData = {
-      ...updateFields,
-      'metadata.last_modified_by': userEmail,
+      ...pickJobFields(req.body),
+      metadata: {
+        ...(job.metadata ?? {}),
+        last_modified_by: userEmail,
+      },
     };
-    
-    const updatedJob = await Job.findByIdAndUpdate(id, updatedJobData, { new: true, runValidators: true });
-    
-    res.status(200).json(updatedJob);
+
+    const { data: updatedJob, error } = await supabaseAdmin
+      .from('jobs')
+      .update(updatedJobData)
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+    if (!updatedJob) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    res.status(200).json(toJob(updatedJob as JobRow));
   } catch (error) {
     console.error('Error updating job:', error);
+    if (httpStatusForDbError(error) === 400) {
+      return res.status(400).json({ error: 'Invalid job data' });
+    }
     res.status(500).json({ error: 'Failed to update job' });
   }
 };
@@ -183,30 +227,28 @@ export const deleteJob = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
     const userId = req.user?.uid;
     const userRole = req.user?.role;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
-    
-    const job = await Job.findById(id);
-    
+
+    const job = await findJobById(id);
+
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
-    
+
     // Check if user can delete this job
     const isAuthorized = isAdminUser(userRole) || canModifyResource(userId, job.metadata?.created_by_id);
-    
+
     if (!isAuthorized) {
       return res.status(403).json({ error: 'Not authorized to delete this job' });
     }
-    
-    // Delete job
-    await Job.findByIdAndDelete(id);
-    
-    // Also delete any associated candidates
-    await JobCandidate.deleteMany({ jobId: id });
-    
+
+    // Delete job — associated candidates go with it (ON DELETE CASCADE)
+    const { error } = await supabaseAdmin.from('jobs').delete().eq('id', id);
+    if (error) throw error;
+
     res.status(200).json({ message: 'Job deleted successfully' });
   } catch (error) {
     console.error('Error deleting job:', error);
@@ -219,25 +261,36 @@ export const getJobCandidates = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const userId = req.user?.uid;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
-    
-    // Find the job to ensure it exists
-    const job = await Job.findById(id);
-    
+
+    const job = await findJobById(id);
+
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
-    
+
     if (!canAccessJob(req, job)) {
       return res.status(403).json({ error: 'Not authorized to view candidates for this job' });
     }
-    
-    // Find candidates from the JobCandidate collection
-    const candidates = await JobCandidate.find({ jobId: id }).sort({ 'matchAnalysis.matchPercentage': -1 });
-    
+
+    const { data, error } = await supabaseAdmin
+      .from('job_candidates')
+      .select('*')
+      .eq('job_id', id);
+    if (error) throw error;
+
+    // Sort by match percentage (desc), same order the Mongo sort produced
+    const candidates = (data ?? [])
+      .map((row) => row as JobCandidateRow)
+      .sort(
+        (a, b) =>
+          (b.match_analysis?.matchPercentage ?? -1) - (a.match_analysis?.matchPercentage ?? -1)
+      )
+      .map(toCandidate);
+
     res.status(200).json(candidates);
   } catch (error) {
     console.error('Error fetching job candidates:', error);
@@ -251,69 +304,54 @@ export const saveJobCandidates = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
     const { candidates } = req.body;
     const userId = req.user?.uid;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
-    
-    // Find the job
-    const job = await Job.findById(id);
-    
+
+    const job = await findJobById(id);
+
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
-    
+
     if (!canAccessJob(req, job)) {
       return res.status(403).json({ error: 'Not authorized to modify candidates for this job' });
     }
-    
+
     // Check if valid candidates array was provided
     if (!Array.isArray(candidates) || candidates.length === 0) {
       return res.status(400).json({ error: 'Invalid candidates data' });
     }
 
     console.log(`Saving ${candidates.length} candidates for job ${id}`);
-    
+
     // First, find all existing candidates to preserve tracking data
     const candidateFilenames = candidates
-      .map(c => (c && typeof c.filename === 'string' ? c.filename : null))
+      .map((c) => (c && typeof c.filename === 'string' ? c.filename : null))
       .filter((f): f is string => !!f);
-    const existingCandidates = await JobCandidate.find({ 
-      jobId: id, 
-      filename: { $in: candidateFilenames } 
-    });
-    
-    console.log(`Found ${existingCandidates.length} existing candidates with tracking data`);
-    
-    // Create a map of existing tracking data by filename
-    const trackingDataMap = new Map();
-    existingCandidates.forEach(candidate => {
-      if (candidate.tracking) {
-        trackingDataMap.set(candidate.filename, candidate.tracking);
-      }
-    });
-    
-    // Define a proper interface for the processed candidate to include the tracking property
-    interface ProcessedCandidate {
-      filename: string;
-      name: string;
-      email: string;
-      matchAnalysis: IMatchAnalysis;
-      analysis: {
-        key_skills: string[];
-        education_details: IEducation[];
-        work_experience_details: IWorkExperience[];
-      };
-      jobId: mongoose.Types.ObjectId;
-      userId: string;
-      userEmail: string;
-      tracking?: ITracking;
+
+    const trackingDataMap = new Map<string, ITracking>();
+    if (candidateFilenames.length > 0) {
+      const { data: existingCandidates, error: existingError } = await supabaseAdmin
+        .from('job_candidates')
+        .select('filename, tracking')
+        .eq('job_id', id)
+        .in('filename', candidateFilenames);
+      if (existingError) throw existingError;
+      (existingCandidates ?? []).forEach((row) => {
+        if (row.tracking) {
+          trackingDataMap.set(row.filename, row.tracking as ITracking);
+        }
+      });
     }
+
+    console.log(`Found ${trackingDataMap.size} existing candidates with tracking data`);
 
     // Process candidates one by one instead of bulk write to better handle errors
     const processedCandidates = [];
     const errors = [];
-    
+
     for (const candidate of candidates) {
       try {
         // Skip candidates without required fields
@@ -321,76 +359,52 @@ export const saveJobCandidates = async (req: AuthRequest, res: Response) => {
           console.warn(`Skipping invalid candidate data: ${JSON.stringify(candidate)}`);
           continue;
         }
-        
+
         // Ensure required fields exist
-        const processedCandidate: ProcessedCandidate = {
+        const matchAnalysis: IMatchAnalysis = {
+          matchPercentage: candidate.matchAnalysis.matchPercentage || 0,
+          matchingSkills: candidate.matchAnalysis.matchingSkills || [],
+          missingRequirements: candidate.matchAnalysis.missingRequirements || [],
+          experienceMatch: candidate.matchAnalysis.experienceMatch || false,
+          educationMatch: candidate.matchAnalysis.educationMatch || false,
+          overallAssessment: candidate.matchAnalysis.overallAssessment || ""
+        };
+        const analysis = {
+          key_skills: candidate.analysis?.key_skills || [],
+          education_details: candidate.analysis?.education_details || ([] as IEducation[]),
+          work_experience_details: candidate.analysis?.work_experience_details || ([] as IWorkExperience[])
+        };
+
+        const existingTracking = trackingDataMap.get(candidate.filename);
+        const tracking: ITracking = existingTracking ?? {
+          status: 'pending',
+          statusHistory: [{
+            status: 'pending',
+            timestamp: new Date(),
+            updatedBy: req.user?.email || 'system'
+          }],
+          lastUpdated: new Date(),
+          updatedBy: req.user?.email || 'system'
+        };
+
+        // Upsert on (job_id, filename): preserves tracking, refreshes analysis
+        const row = {
+          job_id: id,
           filename: candidate.filename,
           name: candidate.name || "Unknown",
           email: candidate.email || "unknown@example.com",
-          matchAnalysis: {
-            matchPercentage: candidate.matchAnalysis.matchPercentage || 0,
-            matchingSkills: candidate.matchAnalysis.matchingSkills || [],
-            missingRequirements: candidate.matchAnalysis.missingRequirements || [],
-            experienceMatch: candidate.matchAnalysis.experienceMatch || false,
-            educationMatch: candidate.matchAnalysis.educationMatch || false,
-            overallAssessment: candidate.matchAnalysis.overallAssessment || ""
-          },
-          analysis: {
-            key_skills: candidate.analysis?.key_skills || [],
-            education_details: candidate.analysis?.education_details || [],
-            work_experience_details: candidate.analysis?.work_experience_details || []
-          },
-          jobId: new mongoose.Types.ObjectId(id),
-          userId: candidate.userId || userId,
-          userEmail: candidate.userEmail || req.user?.email || "unknown@example.com"
+          match_analysis: matchAnalysis,
+          analysis,
+          tracking,
+          user_id: candidate.userId || userId,
+          user_email: candidate.userEmail || req.user?.email || "unknown@example.com",
         };
-        
-        // Add existing tracking data if it exists
-        const existingTracking = trackingDataMap.get(candidate.filename);
-        if (existingTracking) {
-          processedCandidate.tracking = existingTracking;
-        } else {
-          processedCandidate.tracking = {
-            status: 'pending',
-            statusHistory: [{
-              status: 'pending',
-              timestamp: new Date(),
-              updatedBy: req.user?.email || 'system'
-            }],
-            lastUpdated: new Date(),
-            updatedBy: req.user?.email || 'system'
-          };
-        }
-        
-        // Try to find existing candidate
-        const existingCandidate = await JobCandidate.findOne({
-          jobId: id,
-          filename: candidate.filename
-        });
-        
-        if (existingCandidate) {
-          // Update existing candidate
-          await JobCandidate.updateOne(
-            { _id: existingCandidate._id },
-            { 
-              $set: {
-                ...processedCandidate,
-                updated_at: new Date()
-              }
-            }
-          );
-        } else {
-          // Create new candidate
-          const newCandidate = new JobCandidate({
-            ...processedCandidate,
-            created_at: new Date(),
-            updated_at: new Date()
-          });
-          
-          await newCandidate.save();
-        }
-        
-        processedCandidates.push(processedCandidate);
+        const { error: upsertError } = await supabaseAdmin
+          .from('job_candidates')
+          .upsert(row, { onConflict: 'job_id,filename' });
+        if (upsertError) throw upsertError;
+
+        processedCandidates.push(row);
       } catch (err: unknown) {
         console.error(`Error processing candidate:`, err);
         errors.push({
@@ -399,7 +413,7 @@ export const saveJobCandidates = async (req: AuthRequest, res: Response) => {
         });
       }
     }
-    
+
     res.status(200).json({
       message: 'Candidates saved successfully',
       savedCount: processedCandidates.length,
@@ -420,7 +434,7 @@ export const updateCandidateStatus = async (req: AuthenticatedRequest, res: Resp
   try {
     const { id, candidateId } = req.params;
     const { status, ...additionalData } = req.body;
-    
+
     // Authenticate user
     const userId = req.user?.uid;
     if (!userId) {
@@ -428,7 +442,7 @@ export const updateCandidateStatus = async (req: AuthenticatedRequest, res: Resp
     }
 
     // Find job and candidate
-    const job = await Job.findById(id);
+    const job = await findJobById(id);
     if (!job) {
       return res.status(404).json({ message: 'Job not found' });
     }
@@ -443,36 +457,38 @@ export const updateCandidateStatus = async (req: AuthenticatedRequest, res: Resp
     }
 
     // Find the candidate by filename
-    const candidate = await JobCandidate.findOne({ 
-      jobId: id, 
-      filename: candidateId 
-    });
+    const { data: candidateRow, error: candidateError } = await supabaseAdmin
+      .from('job_candidates')
+      .select('*')
+      .eq('job_id', id)
+      .eq('filename', candidateId)
+      .maybeSingle();
+    if (candidateError) throw candidateError;
 
-    if (!candidate) {
+    if (!candidateRow) {
       return res.status(404).json({ message: 'Candidate not found' });
     }
+    const candidate = candidateRow as JobCandidateRow;
 
     // Initialize tracking if it doesn't exist
-    if (!candidate.tracking) {
-      candidate.tracking = {
-        status: 'new',
-        statusHistory: [],
-        lastUpdated: new Date(),
-        updatedBy: req.user?.email || 'system'
-      };
-    }
+    const tracking: ITracking = candidate.tracking ?? {
+      status: 'new',
+      statusHistory: [],
+      lastUpdated: new Date(),
+      updatedBy: req.user?.email || 'system'
+    };
 
     // Update tracking info
-    candidate.tracking.status = status;
-    candidate.tracking.lastUpdated = new Date();
-    candidate.tracking.updatedBy = req.user?.email || 'system';
+    tracking.status = status;
+    tracking.lastUpdated = new Date().toISOString();
+    tracking.updatedBy = req.user?.email || 'system';
 
     // Add status history entry
-    if (!candidate.tracking.statusHistory) {
-      candidate.tracking.statusHistory = [];
+    if (!tracking.statusHistory) {
+      tracking.statusHistory = [];
     }
 
-    candidate.tracking.statusHistory.push({
+    tracking.statusHistory.push({
       status,
       timestamp: new Date(),
       updatedBy: req.user?.email || 'system'
@@ -480,29 +496,37 @@ export const updateCandidateStatus = async (req: AuthenticatedRequest, res: Resp
 
     // Process additional data
     if (status === 'rate_confirmed' && additionalData.rateConfirmed) {
-      candidate.tracking.rateConfirmed = additionalData.rateConfirmed;
+      tracking.rateConfirmed = additionalData.rateConfirmed;
     }
 
     if (status === 'interview_scheduled' && additionalData.interviewDate) {
-      candidate.tracking.interviewDate = additionalData.interviewDate;
+      tracking.interviewDate = additionalData.interviewDate;
     }
 
     if (status === 'contacted' && additionalData.contactedDate) {
-      candidate.tracking.contactedDate = additionalData.contactedDate;
+      tracking.contactedDate = additionalData.contactedDate;
     }
 
     if (additionalData.notes) {
-      candidate.tracking.notes = additionalData.notes;
+      tracking.notes = additionalData.notes;
     }
 
     // Save updated candidate
-    await candidate.save();
+    const { data: updatedRow, error: updateError } = await supabaseAdmin
+      .from('job_candidates')
+      .update({ tracking })
+      .eq('id', candidate.id)
+      .select('*')
+      .single();
+    if (updateError) throw updateError;
+
+    const updated = updatedRow as JobCandidateRow;
 
     // Return the updated candidate with tracking info
-    res.status(200).json({ 
+    res.status(200).json({
       message: 'Candidate status updated successfully',
-      candidate: candidate.toObject(),
-      tracking: candidate.tracking
+      candidate: toCandidate(updated),
+      tracking: updated.tracking
     });
   } catch (error) {
     console.error('Error updating candidate status:', error);
@@ -514,20 +538,21 @@ export const updateCandidateStatus = async (req: AuthenticatedRequest, res: Resp
 export const getAllResumesForMatching = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.uid;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
-    
+
     // Admin-only endpoint (route-gated) — returns every resume for matching
-    const allResumes = await Resume.find({});
-    
-    console.log(`Found ${allResumes.length} total resumes`);
-    
+    const { data: allResumes, error } = await supabaseAdmin.from('resumes').select('*');
+    if (error) throw error;
+
+    console.log(`Found ${allResumes?.length ?? 0} total resumes`);
+
     // Transform the resumes to the expected format
-    const transformedResumes = allResumes.map(resume => {
+    const transformedResumes = (allResumes ?? []).map((resume) => {
       const user_id = resume.user_id || userId;
-      
+
       return {
         filename: resume.filename,
         analysis: resume.analysis || {
@@ -538,10 +563,10 @@ export const getAllResumesForMatching = async (req: AuthRequest, res: Response) 
           work_experience_details: []
         },
         userId: user_id,
-        userEmail: resume.user_email || "unknown@example.com"
+        userEmail: "unknown@example.com"
       };
     });
-    
+
     res.status(200).json(transformedResumes);
   } catch (error) {
     console.error('Error fetching all resumes:', error);
@@ -556,37 +581,42 @@ export const assignRecruiters = async (req: AuthRequest, res: Response) => {
     const { recruiterIds } = req.body;
     const userId = req.user?.uid;
     const userRole = req.user?.role;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
-    
+
     // Find the job
-    const job = await Job.findById(id);
-    
+    const job = await findJobById(id);
+
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
-    
+
     // Check if user is admin or the creator of the job
     const isAdmin = userRole === 'admin';
     const isCreator = job.metadata?.created_by_id === userId;
-    
+
     if (!isAdmin && !isCreator) {
       return res.status(403).json({ error: 'Not authorized to assign recruiters to this job' });
     }
-    
+
     // Update job with assigned recruiters (validated: plain uid strings only)
     if (!Array.isArray(recruiterIds) || recruiterIds.some((r: unknown) => typeof r !== 'string')) {
       return res.status(400).json({ error: 'Invalid recruiterIds' });
     }
-    const updatedJob = await Job.findByIdAndUpdate(
-      id, 
-      { assigned_recruiters: recruiterIds }, 
-      { new: true, runValidators: true }
-    );
-    
-    res.status(200).json(updatedJob);
+    const { data: updatedJob, error } = await supabaseAdmin
+      .from('jobs')
+      .update({ assigned_recruiters: recruiterIds })
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+    if (!updatedJob) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    res.status(200).json(toJob(updatedJob as JobRow));
   } catch (error) {
     console.error('Error assigning recruiters:', error);
     res.status(500).json({ error: 'Failed to assign recruiters' });
@@ -604,7 +634,7 @@ export const getCandidateFile = async (req: AuthRequest, res: Response) => {
       return res.status(401).json({ error: 'User not authenticated' });
     }
 
-    const job = await Job.findById(id);
+    const job = await findJobById(id);
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
@@ -612,12 +642,23 @@ export const getCandidateFile = async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ error: 'Not authorized to access candidates for this job' });
     }
 
-    const candidate = await JobCandidate.findOne({ jobId: id, filename });
+    const { data: candidate, error: candidateError } = await supabaseAdmin
+      .from('job_candidates')
+      .select('id')
+      .eq('job_id', id)
+      .eq('filename', filename)
+      .maybeSingle();
+    if (candidateError) throw candidateError;
     if (!candidate) {
       return res.status(404).json({ error: 'Candidate not found' });
     }
 
-    const resume = await Resume.findOne({ filename });
+    const { data: resume, error: resumeError } = await supabaseAdmin
+      .from('resumes')
+      .select('user_id, filename')
+      .eq('filename', filename)
+      .maybeSingle();
+    if (resumeError) throw resumeError;
     if (!resume) {
       return res.status(404).json({ error: 'Resume file not found' });
     }
@@ -659,40 +700,47 @@ export const checkForNewResumes = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params; // Job ID
     const userId = req.user?.uid;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
-    
+
     // Find the job to ensure it exists
-    const job = await Job.findById(id);
-    
+    const job = await findJobById(id);
+
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
-    
+
     if (!canAccessJob(req, job)) {
       return res.status(403).json({ error: 'Not authorized to view this job' });
     }
-    
+
     // Get all analyzed candidates for this job
-    const analyzedCandidates = await JobCandidate.find({ jobId: id });
-    const analyzedFilenames = analyzedCandidates.map(c => c.filename);
-    
+    const { data: analyzedCandidates, error: candidatesError } = await supabaseAdmin
+      .from('job_candidates')
+      .select('filename')
+      .eq('job_id', id);
+    if (candidatesError) throw candidatesError;
+    const analyzedFilenames = (analyzedCandidates ?? []).map((c) => c.filename);
+
     // Get all available resumes
-    const allResumes = await Resume.find({});
-    const allFilenames = allResumes.map(r => r.filename);
-    
+    const { data: allResumes, error: resumesError } = await supabaseAdmin
+      .from('resumes')
+      .select('filename');
+    if (resumesError) throw resumesError;
+    const allFilenames = (allResumes ?? []).map((r) => r.filename);
+
     // Find filenames that are in allResumes but not in analyzedCandidates
-    const newFilenames = allFilenames.filter(filename => !analyzedFilenames.includes(filename));
-    
-    res.status(200).json({ 
+    const newFilenames = allFilenames.filter((filename) => !analyzedFilenames.includes(filename));
+
+    res.status(200).json({
       hasNewResumes: newFilenames.length > 0,
       newResumeCount: newFilenames.length,
       analyzedCount: analyzedFilenames.length,
       totalResumeCount: allFilenames.length
     });
-    
+
   } catch (error) {
     console.error('Error checking for new resumes:', error);
     res.status(500).json({ error: 'Failed to check for new resumes' });

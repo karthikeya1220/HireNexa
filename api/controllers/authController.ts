@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import User from '../models/User';
-import { errCode } from '../utils/errors';
+import { supabaseAdmin, httpStatusForDbError } from '../db';
+import { toPublicUser, IUser } from '../models/User';
 
 // Define interface for authenticated request
 interface AuthRequest extends Request {
@@ -13,21 +13,27 @@ interface AuthRequest extends Request {
   };
 }
 
+const findUser = async (uid: string): Promise<IUser | null> => {
+  const { data, error } = await supabaseAdmin.from('users').select('*').eq('uid', uid).maybeSingle();
+  if (error) throw error;
+  return data;
+};
+
 // Get current user data
 export const getCurrentUser = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.uid;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
-    
-    const user = await User.findOne({ uid: userId });
-    
+
+    const user = await findUser(userId);
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     return res.status(200).json({
       uid: user.uid,
       email: user.email,
@@ -43,79 +49,65 @@ export const getCurrentUser = async (req: AuthRequest, res: Response) => {
 // Update user data
 export const updateUser = async (req: AuthRequest, res: Response) => {
   try {
-    const userIdFromAuth = req.user?.uid;
-    const { email, name, role } = req.body;
-    
+    const userId = req.user?.uid;
+    const { email, name, role, profile_complete } = req.body;
+
     // Identity always comes from the verified token — never from the body.
-    const userId = userIdFromAuth;
-    
-    // Ensure we have a user ID
     if (!userId) {
       return res.status(401).json({ error: 'User ID is required' });
     }
-    
-    // Check if user exists
-    let user = await User.findOne({ uid: userId });
-    
-    // If user doesn't exist, create a new one
+
+    const user = await findUser(userId);
+
+    // If user doesn't exist, create a new one (email falls back to the token's)
     if (!user) {
-      console.log(`Creating new user with uid: ${userId}`);
-      
-      // Validate required fields for new user
-      if (!email) {
+      const finalEmail = email || req.user?.email;
+      if (!finalEmail) {
         return res.status(400).json({ error: 'Email is required when creating a new user' });
       }
-      
-      // Create new user — role is never taken from the client payload
-      const newUser = new User({
-        uid: userId,
-        email,
-        name: name || email.split('@')[0],
-        role: 'user',
-        created_at: new Date(),
-        updated_at: new Date()
-      });
-      
-      user = await newUser.save();
-      
-      return res.status(201).json({
-        uid: user.uid,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-      });
+
+      const { data: newUser, error: createError } = await supabaseAdmin
+        .from('users')
+        .insert({
+          uid: userId,
+          email: finalEmail,
+          name: (typeof name === 'string' && name.trim()) || finalEmail.split('@')[0],
+          role: 'user', // Role is never taken from the client payload
+          profile_complete: profile_complete === true,
+        })
+        .select('*')
+        .single();
+      if (createError) throw createError;
+
+      return res.status(201).json(toPublicUser(newUser));
     }
-    
+
     // Update existing user with any provided fields
-    const updateData: { name?: string; email?: string; role?: string; updated_at?: Date } = {};
+    const updateData: Record<string, unknown> = {};
     if (name) updateData.name = name;
     if (email && typeof email === 'string') updateData.email = email;
+    if (typeof profile_complete === 'boolean') updateData.profile_complete = profile_complete;
     if (role && req.user?.role === 'admin') updateData.role = role; // Only admins can update roles
-    
-    // Only update if we have fields to update
+
+    let updated = user;
     if (Object.keys(updateData).length > 0) {
-      updateData.updated_at = new Date();
-      
-      user = await User.findOneAndUpdate(
-        { uid: userId },
-        updateData,
-        { new: true, runValidators: true }
-      );
-      
-      if (!user) {
+      const { data, error } = await supabaseAdmin
+        .from('users')
+        .update(updateData)
+        .eq('uid', userId)
+        .select('*')
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) {
         return res.status(404).json({ error: 'User not found' });
       }
+      updated = data;
     }
-    
-    return res.status(200).json({
-      uid: user.uid,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-    });
+
+    return res.status(200).json(toPublicUser(updated));
   } catch (error) {
     console.error('Error updating user:', error);
-    if (errCode(error) === 11000) {
+    if (httpStatusForDbError(error) === 409) {
       return res.status(409).json({ error: 'A user with that email already exists' });
     }
     return res.status(500).json({ error: 'Failed to update user' });
@@ -125,9 +117,12 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
 // Admin only: Get all users
 export const getAllUsers = async (req: AuthRequest, res: Response) => {
   try {
-    const users = await User.find().select('uid email name role created_at');
-    
-    return res.status(200).json(users);
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select('uid, email, name, role, created_at');
+    if (error) throw error;
+
+    return res.status(200).json(data);
   } catch (error) {
     console.error('Error fetching users:', error);
     return res.status(500).json({ error: 'Failed to fetch users' });
@@ -138,100 +133,83 @@ export const getAllUsers = async (req: AuthRequest, res: Response) => {
 export const updateUserRole = async (req: AuthRequest, res: Response) => {
   try {
     const { uid, role } = req.body;
-    
+
     if (!uid || !role) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
-    
+
     if (!['admin', 'user', 'recruiter'].includes(role)) {
       return res.status(400).json({ error: 'Invalid role' });
     }
-    
-    const user = await User.findOneAndUpdate(
-      { uid },
-      { 
-        role,
-        updated_at: new Date() 
-      },
-      { new: true }
-    );
-    
+
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .update({ role })
+      .eq('uid', uid)
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
-    return res.status(200).json({
-      uid: user.uid,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-    });
+
+    return res.status(200).json(toPublicUser(user));
   } catch (error) {
     console.error('Error updating user role:', error);
+    if (httpStatusForDbError(error) === 400) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
     return res.status(500).json({ error: 'Failed to update user role' });
   }
 };
 
-// Create the user record for the currently authenticated Firebase user.
+// Create the user record for the currently authenticated user.
 // Requires the `authenticate` middleware: uid/email come from the verified
-// ID token and can never be spoofed via the request body.
+// token and can never be spoofed via the request body.
 export const createUserFromAuth = async (req: AuthRequest, res: Response) => {
   try {
     const uid = req.user?.uid;
     const email = req.user?.email;
     const { name } = req.body || {};
-    
+
     if (!uid || !email) {
       return res.status(401).json({ error: 'Authenticated user with an email is required' });
     }
-    
-    const existingUser = await User.findOne({ uid });
-    
+
+    const existingUser = await findUser(uid);
+
     if (existingUser) {
       return res.status(200).json({
         message: 'User already exists',
-        user: {
-          uid: existingUser.uid,
-          email: existingUser.email,
-          name: existingUser.name,
-          role: existingUser.role,
-        }
+        user: toPublicUser(existingUser),
       });
     }
-    
+
     try {
-      const newUser = new User({
-        uid,
-        email,
-        name: (typeof name === 'string' && name.trim()) || email.split('@')[0],
-        role: 'user', // Role is always assigned server-side
-        created_at: new Date(),
-        updated_at: new Date()
-      });
-      
-      await newUser.save();
-      
+      const { data: newUser, error } = await supabaseAdmin
+        .from('users')
+        .insert({
+          uid,
+          email,
+          name: (typeof name === 'string' && name.trim()) || email.split('@')[0],
+          role: 'user', // Role is always assigned server-side
+        })
+        .select('*')
+        .single();
+      if (error) throw error;
+
       return res.status(201).json({
         message: 'User created successfully',
-        user: {
-          uid: newUser.uid,
-          email: newUser.email,
-          name: newUser.name,
-          role: newUser.role,
-        }
+        user: toPublicUser(newUser),
       });
     } catch (saveError) {
-      if (errCode(saveError) === 11000) {
-        const conflictUser = await User.findOne({ uid });
+      if (httpStatusForDbError(saveError) === 409) {
+        const conflictUser = await findUser(uid);
         if (conflictUser) {
           return res.status(200).json({
             message: 'User already exists',
-            user: {
-              uid: conflictUser.uid,
-              email: conflictUser.email,
-              name: conflictUser.name,
-              role: conflictUser.role,
-            }
+            user: toPublicUser(conflictUser),
           });
         }
       }

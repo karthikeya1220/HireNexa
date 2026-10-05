@@ -1,6 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -9,20 +8,12 @@ import resumeRoutes from './routes/resume';
 import jobRoutes from './routes/job';
 import vendorRoutes from './routes/vendor';
 import { corsOptions } from './config/cors';
+// Importing db.ts validates Supabase env (fail-fast in production) and creates
+// the service-role client every controller shares.
+import { supabaseAdmin } from './db';
 
 // Load environment variables
 dotenv.config();
-
-// Fail fast on missing configuration — never fall back to a local dev DB in
-// production (a silent localhost fallback previously made this guard dead code).
-const MONGODB_URI =
-  process.env.MONGODB_URI ||
-  (process.env.NODE_ENV === 'production' ? undefined : 'mongodb://localhost:27017/test');
-
-if (!MONGODB_URI) {
-  console.error('FATAL: MONGODB_URI is not set');
-  process.exit(1);
-}
 
 // Express app setup
 const app = express();
@@ -69,9 +60,19 @@ app.use('/api/jobs/match-analysis', express.json({ limit: '5mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
-// Root endpoint - health check (reports DB readiness)
-app.get('/api/health', (req: Request, res: Response) => {
-  const dbReady = mongoose.connection.readyState === 1;
+// Root endpoint - health check (verifies the Supabase connection with a
+// trivial head query through the service-role client)
+app.get('/api/health', async (req: Request, res: Response) => {
+  let dbReady = false;
+  try {
+    const { error } = await supabaseAdmin
+      .from('users')
+      .select('uid', { count: 'exact', head: true });
+    dbReady = !error;
+    if (error) console.error('[HEALTH] Supabase check failed:', error.message);
+  } catch (error) {
+    console.error('[HEALTH] Supabase check threw:', error);
+  }
   res.status(dbReady ? 200 : 503).json({
     status: dbReady ? 'ok' : 'degraded',
     message: 'API is running',
@@ -109,17 +110,13 @@ app.use((err: MiddlewareError, req: Request, res: Response, next: NextFunction) 
   if (err?.type === 'entity.parse.failed') {
     return res.status(400).json({ error: 'Invalid JSON body' });
   }
-  // Malformed ObjectId params
-  if (err?.name === 'CastError') {
-    return res.status(400).json({ error: 'Invalid id' });
-  }
-  // Mongoose validation failures
-  if (err?.name === 'ValidationError') {
-    return res.status(400).json({ error: 'Validation failed', details: err.message });
-  }
-  // Duplicate key
-  if (err?.code === 11000) {
+  // Postgres errors surfaced from controllers: unique violation / check
+  // violation / malformed uuid
+  if (err?.code === '23505') {
     return res.status(409).json({ error: 'Duplicate value' });
+  }
+  if (err?.code === '23514' || err?.code === '22P02') {
+    return res.status(400).json({ error: 'Validation failed', details: err.message });
   }
 
   // Never leak internal error details to clients
@@ -128,58 +125,36 @@ app.use((err: MiddlewareError, req: Request, res: Response, next: NextFunction) 
   res.status(status).json({ error: status === 500 ? 'Something went wrong' : err.message });
 });
 
-// Initialize MongoDB connection
-mongoose.connect(MONGODB_URI)
-  .then(async () => {
-    console.log('Connected to MongoDB');
-    
-    // Run database initialization checks
-    try {
-      const { initializeDatabase } = await import('./utils/db-init');
-      await initializeDatabase();
-    } catch (initError) {
-      console.error('Error during database initialization:', initError);
-    }
-    
-    // Start the server after DB checks are complete
-    const server = app.listen(PORT, () => {
-      console.log(`Server running at http://localhost:${PORT}`);
-      console.log(`CORS enabled for frontend access`);
-    });
+// Start the server. There is no connection handshake to wait for: the
+// Supabase client is stateless (HTTP) and every query is per-request.
+const server = app.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`CORS enabled for frontend access`);
+});
 
-    // Timeouts: avoid slowloris holding connections open forever. 120s leaves
-    // room for large resume uploads + AI analysis while staying bounded.
-    server.headersTimeout = 30 * 1000;
-    server.requestTimeout = 120 * 1000;
+// Timeouts: avoid slowloris holding connections open forever. 120s leaves
+// room for large resume uploads + AI analysis while staying bounded.
+server.headersTimeout = 30 * 1000;
+server.requestTimeout = 120 * 1000;
 
-    // Graceful shutdown: stop accepting connections, drain in-flight requests,
-    // then close the DB connection so deploys don't kill active work.
-    const shutdown = (signal: string) => {
-      console.log(`${signal} received, shutting down gracefully`);
-      server.close(async () => {
-        try {
-          await mongoose.disconnect();
-        } catch (e) {
-          console.error('Error disconnecting from MongoDB:', e);
-        }
-        process.exit(0);
-      });
-      // Force-exit if draining hangs
-      setTimeout(() => process.exit(1), 10 * 1000).unref();
-    };
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    process.on('SIGINT', () => shutdown('SIGINT'));
-    process.on('unhandledRejection', (reason) => {
-      console.error('Unhandled rejection:', reason);
-    });
-    process.on('uncaughtException', (err) => {
-      console.error('Uncaught exception:', err);
-      shutdown('uncaughtException');
-    });
-  })
-  .catch((err: Error) => {
-    console.error('MongoDB connection error:', err);
-    process.exit(1);
+// Graceful shutdown: stop accepting connections, then drain in-flight
+// requests so deploys don't kill active work.
+const shutdown = (signal: string) => {
+  console.log(`${signal} received, shutting down gracefully`);
+  server.close(() => {
+    process.exit(0);
   });
+  // Force-exit if draining hangs
+  setTimeout(() => process.exit(1), 10 * 1000).unref();
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+  shutdown('uncaughtException');
+});
 
 export default app;

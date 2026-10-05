@@ -8,7 +8,9 @@ import {
   getAllResumes,
   analyzeAndUpload,
   getResumeContent,
-  getResumeDownload
+  getResumeDownload,
+  getFeedback,
+  addFeedback
 } from '../controllers/resumeController';
 import { authenticate, isAdmin } from '../middlewares/authMiddleware';
 import { aiDailyQuota } from '../middlewares/aiQuota';
@@ -29,6 +31,10 @@ router.post('/analyze', aiDailyQuota, analyzeAndUpload);
 
 // Resume routes with query parameters (must come before routes with :id)
 router.get('/', getUserResumes);
+
+// Company feedback for one resume (was Firestore) — must come before /:id
+router.get('/feedback', getFeedback);
+router.post('/feedback', addFeedback);
 
 // Standard resume routes
 router.post('/check-duplicate', checkDuplicateResume);

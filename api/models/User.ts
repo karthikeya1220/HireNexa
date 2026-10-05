@@ -1,67 +1,23 @@
-import mongoose from 'mongoose';
+// users table row shape (Supabase Postgres). The API has always spoken
+// uid/email/name/role — that contract is unchanged from the Mongo era.
 
-// Define interface for User document
-export interface IUser extends mongoose.Document {
+export interface IUser {
   uid: string;
   email: string;
-  name?: string;
+  name?: string | null;
   role: 'user' | 'admin' | 'recruiter';
-  created_at: Date;
-  updated_at: Date;
+  profile_complete?: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
-// Define the schema for User
-const UserSchema = new mongoose.Schema<IUser>({
-  uid: {
-    type: String,
-    required: true,
-    unique: true,
-    index: true
-  },
-  email: {
-    type: String,
-    required: true,
-    unique: true
-  },
-  name: {
-    type: String,
-    required: false
-  },
-  role: {
-    type: String,
-    enum: ['user', 'admin', 'recruiter'],
-    default: 'user'
-  },
-  created_at: {
-    type: Date,
-    default: Date.now
-  },
-  updated_at: {
-    type: Date,
-    default: Date.now
-  }
+// Columns the API returns (mirrors the old `.select('uid email name role created_at')`).
+export type PublicUser = Pick<IUser, 'uid' | 'email' | 'name' | 'role' | 'created_at'>;
+
+export const toPublicUser = (row: IUser): PublicUser => ({
+  uid: row.uid,
+  email: row.email,
+  name: row.name ?? undefined,
+  role: row.role,
+  created_at: row.created_at,
 });
-
-// Create index on uid for fast lookups
-UserSchema.index({ uid: 1 });
-
-// Pre-save hook to handle possible duplicate email issues
-UserSchema.pre('save', async function(next) {
-  // Set default name if not provided
-  if (!this.name && this.email) {
-    this.name = this.email.split('@')[0];
-  }
-  
-  // Update timestamps
-  this.updated_at = new Date();
-  if (!this.created_at) {
-    this.created_at = new Date();
-  }
-
-  next();
-});
-
-// Use 'User' as the model name for consistency
-const User = mongoose.models.User || mongoose.model<IUser>('User', UserSchema);
-
-export default User; 

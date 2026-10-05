@@ -1,11 +1,8 @@
-// Narrow helpers for inspecting unknown caught errors (duplicate-key codes,
-// Mongo CastErrors, AWS S3 error names) without resorting to `any`.
+// Narrow helpers for inspecting unknown caught errors (AWS S3 error names)
+// without resorting to `any`.
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
-
-export const errCode = (error: unknown): unknown =>
-  isRecord(error) && 'code' in error ? error.code : undefined;
 
 export const errName = (error: unknown): string | undefined => {
   if (error instanceof Error) return error.name;

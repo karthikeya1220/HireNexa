@@ -1,16 +1,17 @@
-import mongoose, { Document, Schema } from 'mongoose';
+// vendors table row/API shapes (flat fields + metadata jsonb, as before).
 
-export interface IVendor extends Document {
+export interface IVendor {
+  _id: string;
   name: string;
-  address?: string;
-  contact_person?: string;
-  country?: string;
-  email?: string;
-  phone?: string;
-  state?: string;
+  address?: string | null;
+  contact_person?: string | null;
+  country?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  state?: string | null;
   status?: string;
-  created_at: Date;
-  updated_at: Date;
+  created_at: string;
+  updated_at: string;
   metadata?: {
     created_by?: string;
     created_by_id?: string;
@@ -18,25 +19,11 @@ export interface IVendor extends Document {
   };
 }
 
-const VendorSchema = new Schema<IVendor>(
-  {
-    name: { type: String, required: true },
-    address: { type: String },
-    contact_person: { type: String },
-    country: { type: String },
-    email: { type: String },
-    phone: { type: String },
-    state: { type: String },
-    status: { type: String, default: 'active', enum: ['active', 'inactive'] },
-    created_at: { type: Date, default: Date.now },
-    updated_at: { type: Date, default: Date.now },
-    metadata: {
-      created_by: { type: String },
-      created_by_id: { type: String },
-      last_modified_by: { type: String },
-    },
-  },
-  { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } }
-);
+export interface VendorRow extends Omit<IVendor, '_id'> {
+  id: string;
+}
 
-export default mongoose.models.Vendor || mongoose.model<IVendor>('Vendor', VendorSchema); 
+export const toVendor = (row: VendorRow): IVendor => {
+  const { id, ...rest } = row;
+  return { ...rest, _id: id };
+};

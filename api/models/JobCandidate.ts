@@ -1,4 +1,5 @@
-import mongoose, { Document, Schema, Types } from 'mongoose';
+// job_candidates table: interfaces kept identical to the Mongo era (the
+// frontend consumes matchAnalysis/tracking camelCase), plus row <-> API mappers.
 
 export interface IMatchAnalysis {
   matchPercentage: number;
@@ -14,7 +15,7 @@ export interface IWorkExperience {
   position: string;
   duration?: {
     start: string;
-    end?: string;
+    end: string;
   };
   responsibilities?: string[];
   technologies?: string[];
@@ -28,7 +29,7 @@ export interface IEducation {
 
 export interface IStatusHistoryEntry {
   status: string;
-  timestamp: Date;
+  timestamp: Date | string;
   updatedBy: string;
   additionalData?: Record<string, unknown>;
 }
@@ -36,7 +37,7 @@ export interface IStatusHistoryEntry {
 export interface ITracking {
   status: string;
   statusHistory: IStatusHistoryEntry[];
-  lastUpdated: Date;
+  lastUpdated: Date | string;
   updatedBy: string;
   rateConfirmed?: number;
   interviewDate?: string;
@@ -45,7 +46,8 @@ export interface ITracking {
   additionalData?: Record<string, unknown>;
 }
 
-export interface ICandidate extends Document {
+export interface ICandidate {
+  _id: string;
   filename: string;
   name: string;
   email: string;
@@ -56,88 +58,40 @@ export interface ICandidate extends Document {
     work_experience_details: IWorkExperience[];
   };
   tracking?: ITracking;
-  jobId: Types.ObjectId;
-  userId: string;
-  userEmail?: string;
-  created_at: Date;
-  updated_at: Date;
+  jobId?: string;
+  userId?: string | null;
+  userEmail?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
-// Create the schema
-const JobCandidateSchema = new Schema<ICandidate>(
-  {
-    filename: { type: String, required: true },
-    name: { type: String, required: true },
-    email: { type: String, required: true },
-    matchAnalysis: {
-      matchPercentage: { type: Number, required: true },
-      matchingSkills: { type: [String], default: [] },
-      missingRequirements: { type: [String], default: [] },
-      experienceMatch: { type: Boolean, default: false },
-      educationMatch: { type: Boolean, default: false },
-      overallAssessment: { type: String },
-    },
-    analysis: {
-      key_skills: { type: [String], default: [] },
-      education_details: [
-        {
-          degree: { type: String },
-          major: { type: String },
-          institute: { type: String },
-        },
-      ],
-      work_experience_details: [
-        {
-          company: { type: String },
-          position: { type: String },
-          duration: {
-            start: { type: String },
-            end: { type: String },
-          },
-          responsibilities: { type: [String] },
-          technologies: { type: [String] },
-        },
-      ],
-    },
-    tracking: {
-      status: { type: String, default: 'pending' },
-      statusHistory: [
-        {
-          status: { type: String },
-          timestamp: { type: Date, default: Date.now },
-          updatedBy: { type: String },
-          additionalData: { type: Schema.Types.Mixed },
-        },
-      ],
-      lastUpdated: { type: Date, default: Date.now },
-      updatedBy: { type: String },
-      rateConfirmed: { type: Number },
-      interviewDate: { type: String },
-      contactedDate: { type: String },
-      notes: { type: String },
-      additionalData: { type: Schema.Types.Mixed },
-    },
-    // Fix for MongoDB ObjectId reference
-    jobId: { 
-      type: Schema.Types.ObjectId, 
-      ref: 'Job', 
-      required: true 
-    },
-    userId: { type: String, required: true },
-    userEmail: { type: String },
-    created_at: { type: Date, default: Date.now },
-    updated_at: { type: Date, default: Date.now },
-  },
-  { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } }
-);
+// Raw Postgres row (snake_case jsonb/column names).
+export interface JobCandidateRow {
+  id: string;
+  job_id: string;
+  filename: string;
+  name: string;
+  email: string;
+  match_analysis: IMatchAnalysis;
+  analysis: ICandidate['analysis'];
+  tracking?: ITracking | null;
+  user_id?: string | null;
+  user_email?: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
-// Compound index for fast lookups - find candidates by jobId and filename
-JobCandidateSchema.index({ jobId: 1, filename: 1 }, { unique: true });
-
-// Index for searching candidates by job
-JobCandidateSchema.index({ jobId: 1 });
-
-// Create the model directly if it doesn't already exist
-const JobCandidate = mongoose.models.JobCandidate || mongoose.model<ICandidate>('JobCandidate', JobCandidateSchema);
-
-export default JobCandidate;
+export const toCandidate = (row: JobCandidateRow): ICandidate => ({
+  _id: row.id,
+  jobId: row.job_id,
+  filename: row.filename,
+  name: row.name,
+  email: row.email,
+  matchAnalysis: row.match_analysis,
+  analysis: row.analysis,
+  tracking: row.tracking ?? undefined,
+  userId: row.user_id,
+  userEmail: row.user_email,
+  created_at: row.created_at,
+  updated_at: row.updated_at,
+});
