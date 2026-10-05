@@ -109,35 +109,67 @@ const apiClient = {
     // Auth API
     auth: {
         getCurrentUser: async () => {
+            var _a;
             try {
                 const response = await (0, exports.fetcher)({ url: '/auth/me' });
                 return response;
             }
             catch (error) {
                 if (error.status === 404) {
-                    throw new Error('User not found in database');
+                    // User not found, attempt to create a new user with current Firebase user data
+                    console.log('User not found, attempting to create new user from Firebase auth');
+                    const auth = (0, auth_1.getAuth)();
+                    const firebaseUser = auth.currentUser;
+                    if (!firebaseUser) {
+                        console.error('No Firebase user found to create account');
+                        return null;
+                    }
+                    try {
+                        // Create new user with Firebase auth data
+                        const userData = {
+                            uid: firebaseUser.uid,
+                            email: firebaseUser.email || '',
+                            name: firebaseUser.displayName || ((_a = firebaseUser.email) === null || _a === void 0 ? void 0 : _a.split('@')[0]) || 'User',
+                        };
+                        const newUser = await apiClient.auth.createFromAuth(userData);
+                        console.log('Successfully created new user from Firebase auth:', newUser);
+                        return newUser;
+                    }
+                    catch (createError) {
+                        console.error('Failed to create user from Firebase auth:', createError);
+                        return null;
+                    }
                 }
                 throw error;
             }
         },
         updateUser: (data) => (0, exports.fetcher)({ url: '/auth/me', method: 'PUT', body: data }),
-        getAllUsers: () => (0, exports.fetcher)({ url: '/auth/users' }),
-        updateUserRole: (data) => (0, exports.fetcher)({ url: '/auth/users/role', method: 'PUT', body: data }),
-        createFromAuth: (data) => {
-            return (0, exports.fetcher)({
-                url: '/auth/create-from-auth',
-                method: 'POST',
-                body: data,
-                skipAuth: true
-            });
+        getAllUsers: async () => {
+            try {
+                const response = await (0, exports.fetcher)({ url: '/auth/users' });
+                return response;
+            }
+            catch (error) {
+                console.error('Error fetching users:', error);
+                return []; // Return empty array instead of throwing
+            }
         },
-        makeAdmin: (data) => {
-            return (0, exports.fetcher)({
-                url: '/auth/make-admin',
-                method: 'POST',
-                body: data,
-                skipAuth: true
-            });
+        updateUserRole: (data) => (0, exports.fetcher)({ url: '/auth/users/role', method: 'PUT', body: data }),
+        createFromAuth: async (data) => {
+            try {
+                // Server derives uid/email from the verified Firebase ID token,
+                // so the body is only used for the optional display name.
+                const response = await (0, exports.fetcher)({
+                    url: '/auth/create-from-auth',
+                    method: 'POST',
+                    body: data
+                });
+                return response;
+            }
+            catch (error) {
+                console.error('Error creating user from auth:', error);
+                throw error;
+            }
         },
     },
     // Resume API
@@ -181,6 +213,45 @@ const apiClient = {
         getResume: (id) => (0, exports.fetcher)({ url: `/resumes/${id}` }),
         deleteResume: (id) => (0, exports.fetcher)({ url: `/resumes/${id}`, method: 'DELETE' }),
         getAllForMatching: () => (0, exports.fetcher)({ url: '/jobs/resumes/all' }),
+        // Add new methods for getting resume content with proper auth
+        getResumeContent: async (id) => {
+            const token = await getAuthToken();
+            if (!token) {
+                throw new Error("Authentication required to view resume");
+            }
+            // Use a direct fetch with arraybuffer response type
+            const response = await fetch(`${API_BASE_URL}/resumes/${id}/content`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Failed to get resume content: ${errorText}`);
+            }
+            const data = await response.arrayBuffer();
+            return { data };
+        },
+        downloadResume: async (id) => {
+            const token = await getAuthToken();
+            if (!token) {
+                throw new Error("Authentication required to download resume");
+            }
+            // Use a direct fetch with blob response type
+            const response = await fetch(`${API_BASE_URL}/resumes/${id}/download`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Failed to download resume: ${errorText}`);
+            }
+            const data = await response.arrayBuffer();
+            return { data };
+        }
     },
     // Vendor API
     vendors: {

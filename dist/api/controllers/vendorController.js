@@ -5,6 +5,17 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteVendor = exports.updateVendor = exports.createVendor = exports.getVendorById = exports.getAllVendors = void 0;
 const Vendor_1 = __importDefault(require("../models/Vendor"));
+const auth_helpers_1 = require("../utils/auth-helpers");
+// Vendors are readable by any authenticated user (shared list), but only the
+// creator or an admin may modify/delete them.
+const assertCanModify = (req, vendor, res) => {
+    var _a, _b, _c;
+    if (!(0, auth_helpers_1.canModifyResource)((_a = req.user) === null || _a === void 0 ? void 0 : _a.uid, (_b = vendor === null || vendor === void 0 ? void 0 : vendor.metadata) === null || _b === void 0 ? void 0 : _b.created_by_id, (_c = req.user) === null || _c === void 0 ? void 0 : _c.role)) {
+        res.status(403).json({ error: 'Not authorized to modify this vendor' });
+        return false;
+    }
+    return true;
+};
 // Get all vendors
 const getAllVendors = async (req, res) => {
     var _a;
@@ -60,9 +71,10 @@ const createVendor = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        // Add metadata to vendor data
+        // Add metadata to vendor data — server owns identity fields
+        const { _id, metadata, created_at, updated_at, ...bodyFields } = req.body || {};
         const vendorData = {
-            ...req.body,
+            ...bodyFields,
             metadata: {
                 created_by: userEmail,
                 created_by_id: userId,
@@ -75,6 +87,9 @@ const createVendor = async (req, res) => {
     }
     catch (error) {
         console.error('Error creating vendor:', error);
+        if ((error === null || error === void 0 ? void 0 : error.code) === 11000) {
+            return res.status(409).json({ error: 'Vendor already exists' });
+        }
         res.status(500).json({ error: 'Failed to create vendor' });
     }
 };
@@ -93,12 +108,16 @@ const updateVendor = async (req, res) => {
         if (!vendor) {
             return res.status(404).json({ error: 'Vendor not found' });
         }
-        // Update vendor data with last modifier info
+        if (!assertCanModify(req, vendor, res))
+            return;
+        // Update vendor data with last modifier info — strip ownership/identity
+        // fields the client must not control
+        const { _id, metadata, created_at, updated_at, ...updateFields } = req.body || {};
         const updatedVendorData = {
-            ...req.body,
+            ...updateFields,
             'metadata.last_modified_by': userEmail,
         };
-        const updatedVendor = await Vendor_1.default.findByIdAndUpdate(id, updatedVendorData, { new: true });
+        const updatedVendor = await Vendor_1.default.findByIdAndUpdate(id, updatedVendorData, { new: true, runValidators: true });
         res.status(200).json(updatedVendor);
     }
     catch (error) {
@@ -120,6 +139,8 @@ const deleteVendor = async (req, res) => {
         if (!vendor) {
             return res.status(404).json({ error: 'Vendor not found' });
         }
+        if (!assertCanModify(req, vendor, res))
+            return;
         // Delete vendor
         await Vendor_1.default.findByIdAndDelete(id);
         res.status(200).json({ message: 'Vendor deleted successfully' });

@@ -18,5 +18,7 @@ export declare const saveJobCandidates: (req: AuthRequest, res: Response) => Pro
 export declare const updateCandidateStatus: (req: AuthenticatedRequest, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const getAllResumesForMatching: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const assignRecruiters: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
+export declare const getCandidateFile: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
+export declare const analyzeMatches: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const checkForNewResumes: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export {};

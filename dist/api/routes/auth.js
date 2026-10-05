@@ -6,26 +6,17 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const authController_1 = require("../controllers/authController");
 const authMiddleware_1 = require("../middlewares/authMiddleware");
-const cors_1 = __importDefault(require("cors"));
-const cors_2 = require("../config/cors");
 const router = express_1.default.Router();
-// Apply CORS to all auth routes
-router.use((0, cors_1.default)(cors_2.corsOptions));
-// Handle OPTIONS requests explicitly for all routes in this router
-router.options('*', (0, cors_1.default)(cors_2.corsOptions));
-// Add explicit preflight handling for high-traffic routes
-router.options('/create-from-auth', (0, cors_1.default)(cors_2.corsOptions));
-router.options('/me', (0, cors_1.default)(cors_2.corsOptions));
-router.options('/make-admin', (0, cors_1.default)(cors_2.corsOptions));
-// Public routes
-router.post('/create-from-auth', authController_1.createUserFromAuth);
-// User routes
+// Authenticated routes — identity (uid/email) is always derived from the
+// verified Firebase ID token, never from the request body.
+router.post('/create-from-auth', authMiddleware_1.authenticate, authController_1.createUserFromAuth);
 router.get('/me', authMiddleware_1.authenticate, authController_1.getCurrentUser);
 router.put('/me', authMiddleware_1.authenticate, authController_1.updateUser);
 // Admin routes
 router.get('/users', authMiddleware_1.authenticate, authMiddleware_1.isAdmin, authController_1.getAllUsers);
 router.put('/users/role', authMiddleware_1.authenticate, authMiddleware_1.isAdmin, authController_1.updateUserRole);
-// Endpoint to make a user an admin without requiring authentication
-// Typically this would be restricted, but we're providing it for initial setup
-router.post('/make-admin', authController_1.makeAdmin);
+// NOTE: POST /make-admin was removed — it was unauthenticated and allowed
+// privilege escalation / account hijacking. Bootstrap the first admin with
+// `node api/scripts/make-admin.js <email> <uid>`, then manage roles via
+// PUT /users/role (admin-only).
 exports.default = router;

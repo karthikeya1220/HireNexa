@@ -3,13 +3,31 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.checkForNewResumes = exports.assignRecruiters = exports.getAllResumesForMatching = exports.updateCandidateStatus = exports.saveJobCandidates = exports.getJobCandidates = exports.deleteJob = exports.updateJob = exports.createJob = exports.getJobById = exports.getAllJobs = void 0;
+exports.checkForNewResumes = exports.analyzeMatches = exports.getCandidateFile = exports.assignRecruiters = exports.getAllResumesForMatching = exports.updateCandidateStatus = exports.saveJobCandidates = exports.getJobCandidates = exports.deleteJob = exports.updateJob = exports.createJob = exports.getJobById = exports.getAllJobs = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const Job_1 = __importDefault(require("../models/Job"));
 const JobCandidate_1 = __importDefault(require("../models/JobCandidate"));
 const Resume_1 = __importDefault(require("../models/Resume"));
 const auth_helpers_1 = require("../utils/auth-helpers");
-const User_1 = __importDefault(require("../models/User"));
+const gemini_1 = require("../utils/gemini");
+const resumeController_1 = require("./resumeController");
+// Allowed candidate pipeline statuses (mirrors the frontend CandidateStatus
+// union plus the board's 'matched'/'new' placeholders).
+const ALLOWED_CANDIDATE_STATUSES = new Set([
+    'pending', 'new', 'matched', 'shortlisted', 'contacted', 'interested',
+    'not_interested', 'rate_confirmed', 'interview_scheduled', 'approved', 'disapproved'
+]);
+// Job access: admins, the job creator, or recruiters assigned to the job.
+// Used by every candidate read/write endpoint (previously any authenticated
+// user could read/overwrite any job's pipeline).
+const canAccessJob = (req, job) => {
+    var _a, _b, _c, _d;
+    if ((0, auth_helpers_1.isAdminUser)((_a = req.user) === null || _a === void 0 ? void 0 : _a.role))
+        return true;
+    if (((_b = job === null || job === void 0 ? void 0 : job.metadata) === null || _b === void 0 ? void 0 : _b.created_by_id) && job.metadata.created_by_id === ((_c = req.user) === null || _c === void 0 ? void 0 : _c.uid))
+        return true;
+    return Array.isArray(job === null || job === void 0 ? void 0 : job.assigned_recruiters) && job.assigned_recruiters.includes((_d = req.user) === null || _d === void 0 ? void 0 : _d.uid);
+};
 // Get all jobs
 const getAllJobs = async (req, res) => {
     var _a;
@@ -18,8 +36,10 @@ const getAllJobs = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        // Get query parameters
-        const status = req.query.status;
+        // Get query parameters — must be a plain string, otherwise query-string
+        // operators like ?status[$ne]=x would be executed by MongoDB.
+        const rawStatus = req.query.status;
+        const status = typeof rawStatus === 'string' ? rawStatus : undefined;
         // Build query object
         const query = {};
         if (status && status !== 'all') {
@@ -65,9 +85,10 @@ const createJob = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        // Create new job with metadata
+        // Create new job with metadata — never let the client set _id or ownership
+        const { _id, ...bodyFields } = req.body || {};
         const jobData = {
-            ...req.body,
+            ...bodyFields,
             metadata: {
                 created_by: userEmail,
                 created_by_id: userId,
@@ -104,12 +125,14 @@ const updateJob = async (req, res) => {
         if (!isAuthorized) {
             return res.status(403).json({ error: 'Not authorized to update this job' });
         }
-        // Update job data
+        // Update job data — strip identity/ownership fields the client must not
+        // control (mixed `metadata` object + dotted path broke updates before).
+        const { _id, metadata, created_at, updated_at, ...updateFields } = req.body || {};
         const updatedJobData = {
-            ...req.body,
+            ...updateFields,
             'metadata.last_modified_by': userEmail,
         };
-        const updatedJob = await Job_1.default.findByIdAndUpdate(id, updatedJobData, { new: true });
+        const updatedJob = await Job_1.default.findByIdAndUpdate(id, updatedJobData, { new: true, runValidators: true });
         res.status(200).json(updatedJob);
     }
     catch (error) {
@@ -163,6 +186,9 @@ const getJobCandidates = async (req, res) => {
         if (!job) {
             return res.status(404).json({ error: 'Job not found' });
         }
+        if (!canAccessJob(req, job)) {
+            return res.status(403).json({ error: 'Not authorized to view candidates for this job' });
+        }
         // Find candidates from the JobCandidate collection
         const candidates = await JobCandidate_1.default.find({ jobId: id }).sort({ 'matchAnalysis.matchPercentage': -1 });
         res.status(200).json(candidates);
@@ -175,7 +201,7 @@ const getJobCandidates = async (req, res) => {
 exports.getJobCandidates = getJobCandidates;
 // Save a list of analyzed candidate matches to the database
 const saveJobCandidates = async (req, res) => {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     try {
         const { id } = req.params;
         const { candidates } = req.body;
@@ -188,15 +214,21 @@ const saveJobCandidates = async (req, res) => {
         if (!job) {
             return res.status(404).json({ error: 'Job not found' });
         }
+        if (!canAccessJob(req, job)) {
+            return res.status(403).json({ error: 'Not authorized to modify candidates for this job' });
+        }
         // Check if valid candidates array was provided
         if (!Array.isArray(candidates) || candidates.length === 0) {
             return res.status(400).json({ error: 'Invalid candidates data' });
         }
         console.log(`Saving ${candidates.length} candidates for job ${id}`);
         // First, find all existing candidates to preserve tracking data
+        const candidateFilenames = candidates
+            .map(c => (c && typeof c.filename === 'string' ? c.filename : null))
+            .filter((f) => !!f);
         const existingCandidates = await JobCandidate_1.default.find({
             jobId: id,
-            filename: { $in: candidates.map(c => c.filename) }
+            filename: { $in: candidateFilenames }
         });
         console.log(`Found ${existingCandidates.length} existing candidates with tracking data`);
         // Create a map of existing tracking data by filename
@@ -212,7 +244,7 @@ const saveJobCandidates = async (req, res) => {
         for (const candidate of candidates) {
             try {
                 // Skip candidates without required fields
-                if (!candidate.filename || !candidate.matchAnalysis) {
+                if (!candidate || !candidate.filename || !candidate.matchAnalysis) {
                     console.warn(`Skipping invalid candidate data: ${JSON.stringify(candidate)}`);
                     continue;
                 }
@@ -281,9 +313,9 @@ const saveJobCandidates = async (req, res) => {
                 processedCandidates.push(processedCandidate);
             }
             catch (err) {
-                console.error(`Error processing candidate ${candidate.filename}:`, err);
+                console.error(`Error processing candidate:`, err);
                 errors.push({
-                    filename: candidate.filename,
+                    filename: (_h = candidate === null || candidate === void 0 ? void 0 : candidate.filename) !== null && _h !== void 0 ? _h : 'unknown',
                     error: err instanceof Error ? err.message : String(err)
                 });
             }
@@ -319,6 +351,13 @@ const updateCandidateStatus = async (req, res) => {
         const job = await Job_1.default.findById(id);
         if (!job) {
             return res.status(404).json({ message: 'Job not found' });
+        }
+        if (!canAccessJob(req, job)) {
+            return res.status(403).json({ message: 'Not authorized to update candidates for this job' });
+        }
+        // Whitelist status so arbitrary strings can never enter the pipeline
+        if (typeof status !== 'string' || !ALLOWED_CANDIDATE_STATUSES.has(status)) {
+            return res.status(400).json({ message: 'Invalid status value' });
         }
         // Find the candidate by filename
         const candidate = await JobCandidate_1.default.findOne({
@@ -388,60 +427,26 @@ const getAllResumesForMatching = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        // First try to get all resumes directly 
-        try {
-            const allResumes = await Resume_1.default.find({});
-            if (allResumes && allResumes.length > 0) {
-                console.log(`Found ${allResumes.length} total resumes`);
-                // Transform the resumes to the expected format
-                const transformedResumes = allResumes.map(resume => {
-                    const user_id = resume.user_id || userId;
-                    return {
-                        filename: resume.filename,
-                        analysis: resume.analysis || {
-                            name: "Unknown",
-                            email: "unknown@example.com",
-                            key_skills: [],
-                            education_details: [],
-                            work_experience_details: []
-                        },
-                        userId: user_id,
-                        userEmail: resume.user_email || "unknown@example.com"
-                    };
-                });
-                return res.status(200).json(transformedResumes);
-            }
-        }
-        catch (directError) {
-            console.warn('Error fetching resumes directly, falling back to user-by-user approach:', directError);
-        }
-        // Fall back to getting users first and then their resumes
-        const users = await User_1.default.find();
-        const allResumes = [];
-        // Collect resumes from all users
-        for (const user of users) {
-            try {
-                const userResumes = await Resume_1.default.find({ user_id: user.uid });
-                // Transform the resumes to the expected format
-                const transformedResumes = userResumes.map(resume => ({
-                    filename: resume.filename,
-                    analysis: resume.analysis || {
-                        name: "Unknown",
-                        email: "unknown@example.com",
-                        key_skills: [],
-                        education_details: [],
-                        work_experience_details: []
-                    },
-                    userId: user.uid,
-                    userEmail: user.email || "unknown@example.com"
-                }));
-                allResumes.push(...transformedResumes);
-            }
-            catch (error) {
-                console.warn(`Error fetching resumes for user ${user.uid}:`, error);
-            }
-        }
-        res.status(200).json(allResumes);
+        // Admin-only endpoint (route-gated) — returns every resume for matching
+        const allResumes = await Resume_1.default.find({});
+        console.log(`Found ${allResumes.length} total resumes`);
+        // Transform the resumes to the expected format
+        const transformedResumes = allResumes.map(resume => {
+            const user_id = resume.user_id || userId;
+            return {
+                filename: resume.filename,
+                analysis: resume.analysis || {
+                    name: "Unknown",
+                    email: "unknown@example.com",
+                    key_skills: [],
+                    education_details: [],
+                    work_experience_details: []
+                },
+                userId: user_id,
+                userEmail: resume.user_email || "unknown@example.com"
+            };
+        });
+        res.status(200).json(transformedResumes);
     }
     catch (error) {
         console.error('Error fetching all resumes:', error);
@@ -471,8 +476,11 @@ const assignRecruiters = async (req, res) => {
         if (!isAdmin && !isCreator) {
             return res.status(403).json({ error: 'Not authorized to assign recruiters to this job' });
         }
-        // Update job with assigned recruiters
-        const updatedJob = await Job_1.default.findByIdAndUpdate(id, { assigned_recruiters: recruiterIds }, { new: true });
+        // Update job with assigned recruiters (validated: plain uid strings only)
+        if (!Array.isArray(recruiterIds) || recruiterIds.some((r) => typeof r !== 'string')) {
+            return res.status(400).json({ error: 'Invalid recruiterIds' });
+        }
+        const updatedJob = await Job_1.default.findByIdAndUpdate(id, { assigned_recruiters: recruiterIds }, { new: true, runValidators: true });
         res.status(200).json(updatedJob);
     }
     catch (error) {
@@ -481,6 +489,65 @@ const assignRecruiters = async (req, res) => {
     }
 };
 exports.assignRecruiters = assignRecruiters;
+// Download a candidate's resume file for a job the caller may access.
+// Candidates only store the filename, so the actual file is resolved through
+// the Resume record with the same filename.
+const getCandidateFile = async (req, res) => {
+    var _a;
+    try {
+        const { id, filename } = req.params;
+        const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a.uid;
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+        const job = await Job_1.default.findById(id);
+        if (!job) {
+            return res.status(404).json({ error: 'Job not found' });
+        }
+        if (!canAccessJob(req, job)) {
+            return res.status(403).json({ error: 'Not authorized to access candidates for this job' });
+        }
+        const candidate = await JobCandidate_1.default.findOne({ jobId: id, filename });
+        if (!candidate) {
+            return res.status(404).json({ error: 'Candidate not found' });
+        }
+        const resume = await Resume_1.default.findOne({ filename });
+        if (!resume) {
+            return res.status(404).json({ error: 'Resume file not found' });
+        }
+        return (0, resumeController_1.streamResumeToClient)(res, resume, true);
+    }
+    catch (error) {
+        console.error('Error fetching candidate file:', error);
+        return res.status(500).json({ error: 'Failed to fetch candidate file' });
+    }
+};
+exports.getCandidateFile = getCandidateFile;
+// Run AI match analysis for a small batch of resumes against a job.
+// Gemini is called server-side only — the API key never reaches the browser.
+const analyzeMatches = async (req, res) => {
+    var _a;
+    try {
+        const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a.uid;
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+        const { job, resumes } = req.body || {};
+        if (!job || typeof job !== 'object' || !Array.isArray(resumes) || resumes.length === 0) {
+            return res.status(400).json({ error: 'Missing job or resumes' });
+        }
+        if (resumes.length > 10) {
+            return res.status(400).json({ error: 'Too many resumes per request (max 10)' });
+        }
+        const results = await (0, gemini_1.analyzeBatchMatches)(job, resumes);
+        res.status(200).json(results);
+    }
+    catch (error) {
+        console.error('Error in match analysis:', error);
+        res.status(500).json({ error: 'Failed to analyze matches' });
+    }
+};
+exports.analyzeMatches = analyzeMatches;
 // Check for new resumes since last analysis
 const checkForNewResumes = async (req, res) => {
     var _a;
@@ -494,6 +561,9 @@ const checkForNewResumes = async (req, res) => {
         const job = await Job_1.default.findById(id);
         if (!job) {
             return res.status(404).json({ error: 'Job not found' });
+        }
+        if (!canAccessJob(req, job)) {
+            return res.status(403).json({ error: 'Not authorized to view this job' });
         }
         // Get all analyzed candidates for this job
         const analyzedCandidates = await JobCandidate_1.default.find({ jobId: id });

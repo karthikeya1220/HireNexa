@@ -7,6 +7,13 @@ interface AuthRequest extends Request {
         [key: string]: any;
     };
 }
+export declare const analyzeAndUpload: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
+export declare const streamResumeToClient: (res: Response, resume: {
+    user_id: string;
+    filename: string;
+}, asDownload: boolean) => Promise<Response<any, Record<string, any>>>;
+export declare const getResumeContent: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
+export declare const getResumeDownload: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const checkDuplicateResume: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const saveResume: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const getUserResumes: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
