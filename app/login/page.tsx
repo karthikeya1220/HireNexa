@@ -369,14 +369,8 @@ export default function LoginPage() {
                   </span>
                 </div>
                 
-                <div className={`text-sm ${theme === "dark" ? "text-white/80" : "text-gray-600"}`}>
-                  Don&apos;t have an account?{" "}
-                  <Link 
-                    href="/register" 
-                    className={`font-medium ${theme === "dark" ? "text-violet-400 hover:text-violet-300" : "text-violet-600 hover:text-violet-700"}`}
-                  >
-                    Create one
-                  </Link>
+                <div className={`text-sm ${theme === "dark" ? "text-white/60" : "text-gray-500"}`}>
+                  Accounts are provisioned by an administrator
                 </div>
               </motion.div>
             </motion.div>
