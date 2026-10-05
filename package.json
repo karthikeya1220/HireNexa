@@ -11,7 +11,7 @@
     "build:server": "tsc -p api/tsconfig.json",
     "start": "concurrently \"npm run start:frontend\" \"npm run start:server\"",
     "start:frontend": "next start",
-    "start:server": "node dist/server.js",
+    "start:server": "node dist/api/server.js",
     "lint": "next lint"
   },
   "dependencies": {
