@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { DragDropContext, Droppable, Draggable, DropResult } from "react-beautiful-dnd"
+import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd"
 import { motion } from "framer-motion"
 import {
   Calendar,
