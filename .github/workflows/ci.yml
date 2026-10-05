@@ -8,14 +8,16 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     env:
-      MONGODB_URI: mongodb://127.0.0.1:27017/ci
       GEMINI_API_KEY: ci-dummy
       AWS_REGION: us-east-1
       AWS_ACCESS_KEY_ID: ci-dummy
       AWS_SECRET_ACCESS_KEY: ci-dummy
       S3_BUCKET_NAME: ci-dummy
-      FIREBASE_PROJECT_ID: ci-dummy
-      FIREBASE_CLIENT_EMAIL: ci@example.com
+      SUPABASE_URL: http://localhost:54321
+      SUPABASE_SERVICE_ROLE_KEY: ci-dummy
+      SUPABASE_JWT_SECRET: ci-dummy-jwt-secret
+      NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-dummy
     steps:
       - uses: actions/checkout@v4
 
