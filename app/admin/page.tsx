@@ -212,12 +212,9 @@ export default function AdminPage() {
           </div>
           <h1 className="text-3xl font-bold mb-2">Admin Access Required</h1>
           <p className="text-muted-foreground mb-8">
-            You need administrator privileges to access this page.
+            You need administrator privileges to access this page. Contact an
+            administrator to have your role upgraded.
           </p>
-          
-          <div className="max-w-sm mx-auto mb-8">
-            <MakeUserAdmin />
-          </div>
           
           <Button variant="outline" onClick={() => router.push('/dashboard')}>
             Return to Dashboard

@@ -42,10 +42,10 @@ export const getCurrentUser = async (req: AuthRequest, res: Response) => {
 export const updateUser = async (req: AuthRequest, res: Response) => {
   try {
     const userIdFromAuth = req.user?.uid;
-    const { uid, email, name, role } = req.body;
+    const { email, name, role } = req.body;
     
-    // Default to authenticated user's ID if not provided explicitly
-    const userId = uid || userIdFromAuth;
+    // Identity always comes from the verified token — never from the body.
+    const userId = userIdFromAuth;
     
     // Ensure we have a user ID
     if (!userId) {
@@ -64,12 +64,12 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
         return res.status(400).json({ error: 'Email is required when creating a new user' });
       }
       
-      // Create new user
+      // Create new user — role is never taken from the client payload
       const newUser = new User({
         uid: userId,
         email,
         name: name || email.split('@')[0],
-        role: role || 'user', // Default to 'user' role if not specified
+        role: 'user',
         created_at: new Date(),
         updated_at: new Date()
       });
@@ -87,7 +87,7 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
     // Update existing user with any provided fields
     const updateData: any = {};
     if (name) updateData.name = name;
-    if (email) updateData.email = email;
+    if (email && typeof email === 'string') updateData.email = email;
     if (role && req.user?.role === 'admin') updateData.role = role; // Only admins can update roles
     
     // Only update if we have fields to update
@@ -97,8 +97,12 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
       user = await User.findOneAndUpdate(
         { uid: userId },
         updateData,
-        { new: true }
+        { new: true, runValidators: true }
       );
+      
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
     }
     
     return res.status(200).json({
@@ -107,8 +111,11 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
       name: user.name,
       role: user.role,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error updating user:', error);
+    if (error?.code === 11000) {
+      return res.status(409).json({ error: 'A user with that email already exists' });
+    }
     return res.status(500).json({ error: 'Failed to update user' });
   }
 };
@@ -163,30 +170,22 @@ export const updateUserRole = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// Create user from Firebase auth data (no authentication required)
-export const createUserFromAuth = async (req: Request, res: Response) => {
-  // Handle preflight OPTIONS request
-  if (req.method === 'OPTIONS') {
-    return res.status(204).end();
-  }
-  
+// Create the user record for the currently authenticated Firebase user.
+// Requires the `authenticate` middleware: uid/email come from the verified
+// ID token and can never be spoofed via the request body.
+export const createUserFromAuth = async (req: AuthRequest, res: Response) => {
   try {
-    const { uid, email, name } = req.body;
+    const uid = req.user?.uid;
+    const email = req.user?.email;
+    const { name } = req.body || {};
     
-    console.log(`createUserFromAuth called with uid: ${uid}, email: ${email}`);
-    
-    // Validate required fields
     if (!uid || !email) {
-      console.log('createUserFromAuth validation failed: missing uid or email');
-      return res.status(400).json({ error: 'User ID and email are required' });
+      return res.status(401).json({ error: 'Authenticated user with an email is required' });
     }
     
-    // Check if user already exists (with a single database call)
-    console.log(`Checking if user with uid ${uid} already exists`);
     const existingUser = await User.findOne({ uid });
     
     if (existingUser) {
-      console.log(`User with uid ${uid} already exists, returning existing user`);
       return res.status(200).json({
         message: 'User already exists',
         user: {
@@ -198,21 +197,17 @@ export const createUserFromAuth = async (req: Request, res: Response) => {
       });
     }
     
-    // Create new user
-    console.log(`Creating new user with uid ${uid} and email ${email}`);
-    
     try {
       const newUser = new User({
         uid,
         email,
-        name: name || email.split('@')[0], // Use name if provided, otherwise use email prefix
-        role: 'user', // Default role
+        name: (typeof name === 'string' && name.trim()) || email.split('@')[0],
+        role: 'user', // Role is always assigned server-side
         created_at: new Date(),
         updated_at: new Date()
       });
       
       await newUser.save();
-      console.log(`Successfully created new user with uid ${uid}`);
       
       return res.status(201).json({
         message: 'User created successfully',
@@ -224,14 +219,11 @@ export const createUserFromAuth = async (req: Request, res: Response) => {
         }
       });
     } catch (saveError: any) {
-      // Handle duplicate key errors
       if (saveError.code === 11000) {
-        // Try to find and return the existing user
-        const conflictUser = await User.findOne({ email });
+        const conflictUser = await User.findOne({ uid });
         if (conflictUser) {
-          console.log(`User with email ${email} already exists with different uid`);
           return res.status(200).json({
-            message: 'User found with the same email',
+            message: 'User already exists',
             user: {
               uid: conflictUser.uid,
               email: conflictUser.email,
@@ -241,85 +233,10 @@ export const createUserFromAuth = async (req: Request, res: Response) => {
           });
         }
       }
-      
       throw saveError;
     }
   } catch (error) {
     console.error('Error creating user from auth:', error);
     return res.status(500).json({ error: 'Failed to create user' });
-  }
-};
-
-// Development-only endpoint to make a user an admin
-export const makeAdmin = async (req: Request, res: Response) => {
-  try {
-    const { uid, email } = req.body;
-    
-    // Validate required fields
-    if (!uid || !email) {
-      return res.status(400).json({ error: 'User ID and email are required' });
-    }
-    
-    // Find the user by uid first
-    let user = await User.findOne({ uid });
-    
-    if (user) {
-      // Update existing user to admin
-      user.role = 'admin';
-      user.updated_at = new Date();
-      await user.save();
-      
-      console.log(`User ${email} promoted to admin role`);
-    } else {
-      // Try to find user by email as a fallback
-      user = await User.findOne({ email });
-      
-      if (user) {
-        // If user with this email exists but has different uid, update uid and role
-        user.uid = uid;
-        user.role = 'admin';
-        user.updated_at = new Date();
-        await user.save();
-        
-        console.log(`User with email ${email} updated with new uid and promoted to admin`);
-      } else {
-        // Create the user if it doesn't exist at all
-        try {
-          user = new User({
-            uid,
-            email,
-            name: email.split('@')[0],
-            role: 'admin', // Setting as admin
-            created_at: new Date(),
-            updated_at: new Date()
-          });
-          
-          await user.save();
-          console.log(`New admin user created with email ${email}`);
-        } catch (saveError: any) {
-          // Check if it's a duplicate key error
-          if (saveError.code === 11000) {
-            return res.status(409).json({ 
-              error: 'User with this email already exists but could not be updated.',
-              details: saveError.message
-            });
-          }
-          throw saveError;
-        }
-      }
-    }
-    
-    return res.status(200).json({
-      message: 'User promoted to admin successfully',
-      user: {
-        uid: user.uid,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-      }
-    });
-  } catch (error) {
-    console.error('Error making user admin:', error);
-    return res.status(500).json({ error: 'Failed to promote user to admin' });
   }
 };

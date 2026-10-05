@@ -6,12 +6,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { ReloadIcon } from "@radix-ui/react-icons"
+import apiClient from "@/lib/api-client"
 
 // Add interface for API error
 interface ApiError {
   message: string;
   status?: number;
   code?: string;
+  data?: { error?: string };
 }
 
 export function MakeUserAdmin() {
@@ -35,10 +37,9 @@ export function MakeUserAdmin() {
     setIsLoading(true)
     
     try {
-      // const result = await apiClient.auth.makeAdmin({ 
-      //   email, 
-      //   uid 
-      // })
+      // Server enforces admin-only access (PUT /auth/users/role) — a
+      // non-admin caller receives a 403 and the catch block below reports it.
+      await apiClient.auth.updateUserRole({ uid, role: "admin" })
       
       toast({
         title: "Success!",
@@ -51,10 +52,13 @@ export function MakeUserAdmin() {
     } catch (error: unknown) {
       console.error("Error making user admin:", error)
       
-      // Type guard to handle the error properly
-      const errorMessage = error instanceof Error 
-        ? error.message 
-        : (error as ApiError)?.message || "An unexpected error occurred"
+      // Type guard to handle the error properly — prefer the server's
+      // user-facing message (e.g. 403 "Not authorized...")
+      const apiError = error as ApiError
+      const errorMessage = apiError?.data?.error
+        || (error instanceof Error ? error.message : "")
+        || apiError?.message
+        || "An unexpected error occurred"
       
       toast({
         title: "Failed to grant admin privileges",

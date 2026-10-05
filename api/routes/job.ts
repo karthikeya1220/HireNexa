@@ -9,42 +9,40 @@ import {
   updateCandidateStatus,
   assignRecruiters,
   saveJobCandidates,
-  getAllResumesForMatching
+  getAllResumesForMatching,
+  checkForNewResumes,
+  analyzeMatches,
+  getCandidateFile
 } from '../controllers/jobController';
 import { authenticate, isAdmin } from '../middlewares/authMiddleware';
-import cors from 'cors';
-import { corsOptions } from '../config/cors';
 
 const router = express.Router();
 
-// Apply CORS to all job routes
-router.use(cors(corsOptions));
-
-// Handle OPTIONS requests explicitly for all routes in this router
-router.options('*', cors(corsOptions));
-
-// Add explicit preflight handling for high-traffic routes
-router.options('/', cors(corsOptions));
-router.options('/resumes/all', cors(corsOptions));
-router.options('/:id/candidates', cors(corsOptions));
-router.options('/:id/candidates/:candidateId/status', cors(corsOptions));
+// CORS is applied once at the server level (api/server.ts) — no per-router layer.
 
 // Apply authentication middleware to all routes
 router.use(authenticate);
 
+// AI match analysis (Gemini runs server-side only)
+router.post('/match-analysis', analyzeMatches);
+
 // Job routes - accessible by all authenticated users
 router.get('/', getAllJobs);
 
-// Get all resumes for matching (must be before /:id routes)
-router.get('/resumes/all', getAllResumesForMatching);
+// Get all resumes for matching — dumps all users' PII, admin only
+// (must be before /:id routes)
+router.get('/resumes/all', isAdmin, getAllResumesForMatching);
 
 // Job routes with ID parameter
 router.get('/:id', getJobById);
 
-// Job candidates routes
+// Job candidates routes (ownership enforced in the controller:
+// admin, job creator, or assigned recruiter)
 router.get('/:id/candidates', getJobCandidates);
 router.put('/:id/candidates', saveJobCandidates);
 router.put('/:id/candidates/:candidateId/status', updateCandidateStatus);
+router.get('/:id/candidates/:filename/file', getCandidateFile);
+router.get('/:id/check-new-resumes', checkForNewResumes);
 
 // Job routes - accessible only by admin or job creator
 router.post('/', createJob);
@@ -54,4 +52,4 @@ router.delete('/:id', deleteJob);
 // Assigning recruiters to a job
 router.post('/:id/recruiters', assignRecruiters);
 
-export default router; 
+export default router;
