@@ -15,6 +15,7 @@ import {
   getCandidateFile
 } from '../controllers/jobController';
 import { authenticate, isAdmin } from '../middlewares/authMiddleware';
+import { aiDailyQuota } from '../middlewares/aiQuota';
 
 const router = express.Router();
 
@@ -23,8 +24,8 @@ const router = express.Router();
 // Apply authentication middleware to all routes
 router.use(authenticate);
 
-// AI match analysis (Gemini runs server-side only)
-router.post('/match-analysis', analyzeMatches);
+// AI match analysis (Gemini runs server-side only) — per-user daily quota
+router.post('/match-analysis', aiDailyQuota, analyzeMatches);
 
 // Job routes - accessible by all authenticated users
 router.get('/', getAllJobs);

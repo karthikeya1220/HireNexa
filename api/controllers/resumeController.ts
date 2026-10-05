@@ -6,7 +6,8 @@ import { s3Client, bucketName } from '../../AWSConfig';
 import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuidv4 } from 'uuid';
-import { analyzeResumeBuffer } from '../utils/gemini';
+import { analyzeResumeBuffer, type ResumeAnalysis } from '../utils/gemini';
+import { errCode, errHttpStatus, errName } from '../utils/errors';
 import User from '../models/User';
 
 // Define interface for request with user
@@ -14,8 +15,9 @@ interface AuthRequest extends Request {
   user?: {
     uid: string;
     email: string;  // Add email to match the interface from authMiddleware
+    name?: string;
     role?: string;  // Add role to match the interface from authMiddleware
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -51,7 +53,7 @@ export const analyzeAndUpload = async (req: AuthRequest, res: Response) => {
     }
 
     // Analyze with Gemini (throws with a user-facing message on failure)
-    let analysisJson: any;
+    let analysisJson: ResumeAnalysis;
     try {
       analysisJson = await analyzeResumeBuffer(fileBuffer, file.type);
     } catch (analysisError) {
@@ -79,14 +81,16 @@ export const analyzeAndUpload = async (req: AuthRequest, res: Response) => {
       })
     );
 
-    // Generate a signed URL (valid for 7 days)
+    // Generate a signed URL (valid for 1 hour — primary access is via the
+    // authenticated /resumes/:id/content and /:id/download endpoints; this
+    // link is only a fallback, so it must not be a long-lived capability URL)
     const filelink = await getSignedUrl(
       s3Client,
       new GetObjectCommand({
         Bucket: bucketName,
         Key: s3Key,
       }),
-      { expiresIn: 604800 }
+      { expiresIn: 3600 }
     );
 
     // Ensure the user record exists
@@ -120,7 +124,7 @@ export const analyzeAndUpload = async (req: AuthRequest, res: Response) => {
     return res.status(201).json({ analysis: analysisJson, savedData });
   } catch (error) {
     console.error('Error analyzing and uploading resume:', error);
-    if ((error as any)?.code === 11000) {
+    if (errCode(error) === 11000) {
       return res.status(409).json({ error: 'This resume has already been uploaded' });
     }
     return res.status(500).json({ error: 'Failed to save resume' });
@@ -154,8 +158,8 @@ export const streamResumeToClient = async (
       res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
     }
     return res.status(200).send(Buffer.from(bytes));
-  } catch (error: any) {
-    if (error?.name === 'NoSuchKey' || error?.$metadata?.httpStatusCode === 404) {
+  } catch (error) {
+    if (errName(error) === 'NoSuchKey' || errHttpStatus(error) === 404) {
       return res.status(404).json({ error: 'Resume file not found in storage' });
     }
     console.error('Error streaming resume file:', error);
@@ -178,7 +182,7 @@ export const getResumeContent = async (req: AuthRequest, res: Response) => {
     return streamResumeToClient(res, resume, false);
   } catch (error) {
     console.error('Error fetching resume content:', error);
-    if ((error as any)?.name === 'CastError') {
+    if (errName(error) === 'CastError') {
       return res.status(400).json({ error: 'Invalid id' });
     }
     return res.status(500).json({ error: 'Failed to fetch resume content' });
@@ -200,7 +204,7 @@ export const getResumeDownload = async (req: AuthRequest, res: Response) => {
     return streamResumeToClient(res, resume, true);
   } catch (error) {
     console.error('Error downloading resume:', error);
-    if ((error as any)?.name === 'CastError') {
+    if (errName(error) === 'CastError') {
       return res.status(400).json({ error: 'Invalid id' });
     }
     return res.status(500).json({ error: 'Failed to download resume' });

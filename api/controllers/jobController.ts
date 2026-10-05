@@ -1,9 +1,14 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
-import Job from '../models/Job';
-import JobCandidate from '../models/JobCandidate';
+import Job, { type IJob } from '../models/Job';
+import JobCandidate, {
+  type IEducation,
+  type IMatchAnalysis,
+  type ITracking,
+  type IWorkExperience,
+} from '../models/JobCandidate';
 import Resume from '../models/Resume';
-import { authenticate, isAdmin, AuthenticatedRequest } from '../middlewares/authMiddleware';
+import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { canModifyResource, isAdminUser } from '../utils/auth-helpers';
 import { analyzeBatchMatches } from '../utils/gemini';
 import { streamResumeToClient } from './resumeController';
@@ -12,8 +17,9 @@ interface AuthRequest extends Request {
   user?: {
     uid: string;
     email: string;
+    name?: string;
     role?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -27,10 +33,14 @@ const ALLOWED_CANDIDATE_STATUSES = new Set([
 // Job access: admins, the job creator, or recruiters assigned to the job.
 // Used by every candidate read/write endpoint (previously any authenticated
 // user could read/overwrite any job's pipeline).
-const canAccessJob = (req: AuthRequest, job: any): boolean => {
+const canAccessJob = (
+  req: AuthRequest,
+  job: Pick<IJob, 'metadata' | 'assigned_recruiters'> | null | undefined
+): boolean => {
   if (isAdminUser(req.user?.role)) return true;
   if (job?.metadata?.created_by_id && job.metadata.created_by_id === req.user?.uid) return true;
-  return Array.isArray(job?.assigned_recruiters) && job.assigned_recruiters.includes(req.user?.uid);
+  const uid = req.user?.uid;
+  return !!uid && Array.isArray(job?.assigned_recruiters) && job.assigned_recruiters.includes(uid);
 };
 
 
@@ -48,11 +58,18 @@ export const getAllJobs = async (req: AuthRequest, res: Response) => {
     const rawStatus = req.query.status;
     const status = typeof rawStatus === 'string' ? rawStatus : undefined;
     
-    // Build query object
-    const query: any = {};
-    if (status && status !== 'all') {
-      query.status = status;
-    }
+    // Build query: admins see every job; everyone else only sees jobs they
+    // created or were assigned to (same boundary as candidate access).
+    const statusFilter = status && status !== 'all' ? { status } : {};
+    const query = isAdminUser(req.user?.role)
+      ? { ...statusFilter }
+      : {
+          $or: [
+            { 'metadata.created_by_id': userId },
+            { assigned_recruiters: userId },
+          ],
+          ...statusFilter,
+        };
     
     // Find all jobs
     const jobs = await Job.find(query).sort({ created_at: -1 });
@@ -281,23 +298,16 @@ export const saveJobCandidates = async (req: AuthRequest, res: Response) => {
       filename: string;
       name: string;
       email: string;
-      matchAnalysis: {
-        matchPercentage: number;
-        matchingSkills: string[];
-        missingRequirements: string[];
-        experienceMatch: boolean;
-        educationMatch: boolean;
-        overallAssessment: string;
-      };
+      matchAnalysis: IMatchAnalysis;
       analysis: {
         key_skills: string[];
-        education_details: any[];
-        work_experience_details: any[];
+        education_details: IEducation[];
+        work_experience_details: IWorkExperience[];
       };
       jobId: mongoose.Types.ObjectId;
       userId: string;
       userEmail: string;
-      tracking?: any; // Add tracking property as optional
+      tracking?: ITracking;
     }
 
     // Process candidates one by one instead of bulk write to better handle errors
@@ -452,9 +462,6 @@ export const updateCandidateStatus = async (req: AuthenticatedRequest, res: Resp
       };
     }
 
-    // Get previous status for history
-    const previousStatus = candidate.tracking.status;
-
     // Update tracking info
     candidate.tracking.status = status;
     candidate.tracking.lastUpdated = new Date();
@@ -570,7 +577,7 @@ export const assignRecruiters = async (req: AuthRequest, res: Response) => {
     }
     
     // Update job with assigned recruiters (validated: plain uid strings only)
-    if (!Array.isArray(recruiterIds) || recruiterIds.some((r: any) => typeof r !== 'string')) {
+    if (!Array.isArray(recruiterIds) || recruiterIds.some((r: unknown) => typeof r !== 'string')) {
       return res.status(400).json({ error: 'Invalid recruiterIds' });
     }
     const updatedJob = await Job.findByIdAndUpdate(
