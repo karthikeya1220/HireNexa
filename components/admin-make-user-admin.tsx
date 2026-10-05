@@ -18,40 +18,52 @@ interface ApiError {
 
 export function MakeUserAdmin() {
   const [email, setEmail] = useState("")
-  const [uid, setUid] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const { toast } = useToast()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
-    if (!email || !uid) {
+
+    if (!email) {
       toast({
         title: "Missing information",
-        description: "Both email and user ID are required.",
+        description: "Enter the user's email address.",
         variant: "destructive"
       })
       return
     }
-    
+
     setIsLoading(true)
-    
+
     try {
+      // Resolve email -> uid (the role API matches on uid). Users only get a
+      // row after their first sign-in / migration.
+      const users = await apiClient.auth.getAllUsers()
+      const match = Array.isArray(users)
+        ? users.find((u) => u.email?.toLowerCase() === email.toLowerCase())
+        : undefined
+      if (!match?.uid) {
+        toast({
+          title: "User not found",
+          description: "No account with that email has signed in yet.",
+          variant: "destructive"
+        })
+        return
+      }
+
       // Server enforces admin-only access (PUT /auth/users/role) — a
       // non-admin caller receives a 403 and the catch block below reports it.
-      await apiClient.auth.updateUserRole({ uid, role: "admin" })
-      
+      await apiClient.auth.updateUserRole({ uid: match.uid, role: "admin" })
+
       toast({
         title: "Success!",
         description: `${email} has been granted admin privileges.`
       })
-      
-      // Clear the form
+
       setEmail("")
-      setUid("")
     } catch (error: unknown) {
       console.error("Error making user admin:", error)
-      
+
       // Type guard to handle the error properly — prefer the server's
       // user-facing message (e.g. 403 "Not authorized...")
       const apiError = error as ApiError
@@ -59,7 +71,7 @@ export function MakeUserAdmin() {
         || (error instanceof Error ? error.message : "")
         || apiError?.message
         || "An unexpected error occurred"
-      
+
       toast({
         title: "Failed to grant admin privileges",
         description: errorMessage,
@@ -73,7 +85,7 @@ export function MakeUserAdmin() {
   return (
     <div className="border rounded-lg p-6 shadow-sm bg-card">
       <h3 className="text-lg font-medium mb-4">Grant Admin Privileges</h3>
-      
+
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="email">User Email</Label>
@@ -85,22 +97,11 @@ export function MakeUserAdmin() {
             onChange={(e) => setEmail(e.target.value)}
             required
           />
-        </div>
-        
-        <div className="space-y-2">
-          <Label htmlFor="uid">User ID</Label>
-          <Input
-            id="uid"
-            placeholder="Firebase UID"
-            value={uid}
-            onChange={(e) => setUid(e.target.value)}
-            required
-          />
           <p className="text-sm text-muted-foreground">
-            The Firebase user ID is required to properly link the user account
+            The account must have signed in at least once (magic link).
           </p>
         </div>
-        
+
         <Button type="submit" disabled={isLoading} className="w-full">
           {isLoading ? (
             <>

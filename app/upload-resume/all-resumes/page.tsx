@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useAuth } from "@/context/auth-context"
-import { db } from "@/FirebaseConfig"
-import { collection, getDocs } from "firebase/firestore"
+import apiClient from "@/lib/api-client"
 import { motion } from "framer-motion"
 import { RecentFileCard } from "@/components/recent-file-card"
 import { FileText } from "lucide-react"
@@ -13,10 +12,7 @@ import { DashboardSidebar } from "@/components/dashboard-sidebar"
 interface ResumeData {
   filename: string
   filelink: string
-  uploadedAt: {
-    seconds: number
-    nanoseconds: number
-  }
+  uploadedAt: string
   analysis: {
     name: string
     email: string
@@ -58,17 +54,20 @@ export default function AllResumesPage() {
       if (!user) return;
     
       try {
-        const resumeCollectionRef = collection(db, "users", user.uid, "resumes"); // Subcollection reference
-        const querySnapshot = await getDocs(resumeCollectionRef); // Get all documents in the subcollection
+        const data = await apiClient.resumes.getUserResumes(user.uid)
+        const rows = (data as Array<{
+          filename: string
+          filelink: string
+          uploaded_at: string
+          analysis: ResumeData["analysis"]
+        }>) || []
     
-        const resumes = querySnapshot.docs.map((doc) => ({
-          filename: doc.data().filename,
-          filelink: doc.data().filelink,
-          uploadedAt: doc.data().uploadedAt,
-          analysis: doc.data().analysis
-        } as ResumeData));
-    
-        setResumes(resumes); // Store the fetched resumes
+        setResumes(rows.map((row) => ({
+          filename: row.filename,
+          filelink: row.filelink,
+          uploadedAt: row.uploaded_at,
+          analysis: row.analysis
+        })));
       } catch (error) {
         console.error("Error fetching resumes:", error);
       } finally {
@@ -80,9 +79,9 @@ export default function AllResumesPage() {
     
   }, [user])
 
-  const formatDate = (timestamp: { seconds: number; nanoseconds: number }) => {
-    const date = new Date(timestamp.seconds * 1000)
-    return date.toLocaleString()
+  const formatDate = (timestamp: string) => {
+    const date = new Date(timestamp)
+    return Number.isNaN(date.getTime()) ? "Unknown date" : date.toLocaleString()
   }
 
   return (

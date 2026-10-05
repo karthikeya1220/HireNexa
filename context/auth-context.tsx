@@ -1,8 +1,7 @@
 "use client"
 
 import { createContext, useCallback, useContext, useEffect, useState, useRef } from "react"
-import { User } from "firebase/auth"
-import { auth } from "@/FirebaseConfig"
+import { type AuthUser, sessionUser, supabase } from "@/lib/supabase"
 import type { UserProfile } from "@/types/user"
 import apiClient from "@/lib/api-client"
 
@@ -15,7 +14,7 @@ interface UserProfileResponse {
 }
 
 interface AuthContextType {
-  user: User | null;
+  user: AuthUser | null;
   userProfile: UserProfile | null;
   loading: boolean;
   isAdmin: boolean;
@@ -31,7 +30,7 @@ const AuthContext = createContext<AuthContextType>({
 })
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser] = useState<AuthUser | null>(null)
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
@@ -47,50 +46,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     try {
       isRefreshing.current = true;
-      console.log("Starting user profile refresh for:", user.uid);
       
       // First try to get the current user profile
       const response = await apiClient.auth.getCurrentUser();
       const userData = response as UserProfile;
       setUserProfile(userData);
-      const hasAdminRole = userData?.role === 'admin';
-      setIsAdmin(hasAdminRole);
-      console.log("User profile refreshed:", {
-        uid: userData?.uid,
-        email: userData?.email,
-        role: userData?.role,
-        isAdmin: hasAdminRole
-      });
-      
-      // This is helpful to check if admin rights are propagating correctly
-      if (hasAdminRole) {
-        console.log("🔑 User has ADMIN privileges");
-      } else {
-        console.log("User has regular privileges (non-admin)");
-      }
+      setIsAdmin(userData?.role === 'admin');
     } catch (error) {
       console.error("Error refreshing user profile:", error);
       
       // Only try to create the user if we got a 404 (user doesn't exist yet)
       if ((error as { status?: number }).status === 404) {
         try {
-          console.log("Creating user profile after 404");
           const userData = {
             uid: user.uid,
             email: user.email || '',
             name: user.displayName || user.email?.split('@')[0] || 'User',
           };
           
-          // Create the user via API without requiring authentication
+          // The server derives uid/email from the verified token — only the
+          // optional display name travels in the body.
           const response = await apiClient.auth.createFromAuth(userData);
           const result = response as UserProfileResponse;
-          console.log("User record created:", result);
           
           if (result) {
             setUserProfile(result as unknown as UserProfile);
-            const hasAdminRole = result.role === 'admin';
-            setIsAdmin(hasAdminRole);
-            console.log("Created user admin status:", hasAdminRole);
+            setIsAdmin(result.role === 'admin');
           }
         } catch (createError) {
           console.error("Error creating user profile:", createError);
@@ -101,20 +82,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  // Function to create a new user record based on Firebase auth
-  const createUserRecord = async (firebaseUser: User) => {
-    if (!firebaseUser.email) return false;
+  // Create the users row for a newly signed-in Supabase user (404 path).
+  const createUserRecord = async (authUser: AuthUser) => {
+    if (!authUser.email) return false;
     
     try {
       const userData = {
-        uid: firebaseUser.uid,
-        email: firebaseUser.email,
-        name: firebaseUser.displayName || firebaseUser.email.split('@')[0] || 'User',
+        uid: authUser.uid,
+        email: authUser.email,
+        name: authUser.displayName || authUser.email.split('@')[0] || 'User',
       }
       
-      const response = await apiClient.auth.createFromAuth(userData);
-      const result = response as UserProfileResponse;
-      console.log("User record created from Firebase auth:", result);
+      await apiClient.auth.createFromAuth(userData);
       return true;
     } catch (error) {
       console.error("Error creating user record:", error);
@@ -122,96 +101,91 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  // Handle authentication state changes
-  useEffect(() => {
-    let isMounted = true;
-    
-    const unsubscribe = auth.onAuthStateChanged(async (authUser) => {
-      if (!isMounted) return;
-      
-      setUser(authUser);
-      
-      if (authUser) {
-        // Clear any previous timeout
-        if (refreshTimeout.current) {
-          clearTimeout(refreshTimeout.current);
-          refreshTimeout.current = null;
-        }
-        
+  // Sync local state + profile for a Supabase auth user (or sign-out).
+  const syncAuthUser = useCallback(async (authUser: AuthUser | null) => {
+    if (!authUser) {
+      setUser(null);
+      setUserProfile(null);
+      setIsAdmin(false);
+      initialLoadAttempted.current = true;
+      setLoading(false);
+      return;
+    }
+
+    setUser(authUser);
+
+    // Clear any previous retry timeout
+    if (refreshTimeout.current) {
+      clearTimeout(refreshTimeout.current);
+      refreshTimeout.current = null;
+    }
+
+    try {
+      // Try to get the user profile
+      const response = await apiClient.auth.getCurrentUser();
+      const userData = response as UserProfileResponse;
+      setUserProfile(userData as unknown as UserProfile);
+      setIsAdmin(userData?.role === 'admin');
+      initialLoadAttempted.current = true;
+      setLoading(false);
+    } catch (error) {
+      console.error("Error fetching user profile:", error);
+
+      // If user doesn't exist in database, create them
+      if ((error as { status?: number }).status === 404) {
         try {
-          // Try to get the user profile
-          const response = await apiClient.auth.getCurrentUser();
-          const userData = response as UserProfileResponse;
-          if (isMounted) {
-            setUserProfile(userData as unknown as UserProfile);
-            setIsAdmin(userData?.role === 'admin');
-            initialLoadAttempted.current = true;
-            setLoading(false);
-          }
-        } catch (error) {
-          console.error("Error fetching user profile:", error);
-          
-          // If user doesn't exist in database, create them
-          if ((error as { status?: number }).status === 404) {
+          await createUserRecord(authUser);
+
+          // Wait a bit before trying to fetch the user again
+          refreshTimeout.current = setTimeout(async () => {
             try {
-              await createUserRecord(authUser);
-              
-              // Wait a bit before trying to fetch the user again
-              refreshTimeout.current = setTimeout(async () => {
-                if (!isMounted) return;
-                
-                try {
-                  const response = await apiClient.auth.getCurrentUser();
-                  const newUserData = response as UserProfileResponse;
-                  if (isMounted) {
-                    setUserProfile(newUserData as unknown as UserProfile);
-                    setIsAdmin(newUserData?.role === 'admin');
-                  }
-                } catch (retryError) {
-                  console.error("Error on retry:", retryError);
-                  if (isMounted) {
-                    setUserProfile(null);
-                    setIsAdmin(false);
-                  }
-                }
-              }, 1500);
-            } catch (createError) {
-              console.error("Error creating user:", createError);
-              if (isMounted) {
-                setUserProfile(null);
-                setIsAdmin(false);
-              }
-            }
-          } else {
-            if (isMounted) {
+              const response = await apiClient.auth.getCurrentUser();
+              const newUserData = response as UserProfileResponse;
+              setUserProfile(newUserData as unknown as UserProfile);
+              setIsAdmin(newUserData?.role === 'admin');
+            } catch (retryError) {
+              console.error("Error on retry:", retryError);
               setUserProfile(null);
               setIsAdmin(false);
             }
-          }
-          
-          if (isMounted && !initialLoadAttempted.current) {
-            initialLoadAttempted.current = true;
-            setLoading(false);
-          }
-        }
-      } else {
-        if (isMounted) {
+          }, 1500);
+        } catch (createError) {
+          console.error("Error creating user:", createError);
           setUserProfile(null);
           setIsAdmin(false);
-          initialLoadAttempted.current = true;
-          setLoading(false);
         }
+      } else {
+        setUserProfile(null);
+        setIsAdmin(false);
       }
-    });
+
+      if (!initialLoadAttempted.current) {
+        initialLoadAttempted.current = true;
+        setLoading(false);
+      }
+    }
+  }, []);
+
+  // Handle authentication state changes (fires INITIAL_SESSION immediately,
+  // then every SIGNED_IN / SIGNED_OUT / TOKEN_REFRESHED event).
+  useEffect(() => {
+    let isMounted = true;
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        if (!isMounted) return;
+        await syncAuthUser(sessionUser(session));
+      }
+    );
 
     return () => {
       isMounted = false;
       if (refreshTimeout.current) {
         clearTimeout(refreshTimeout.current);
       }
-      unsubscribe();
+      subscription.unsubscribe();
     };
-  }, []);
+  }, [syncAuthUser]);
 
   return (
     <AuthContext.Provider value={{ user, userProfile, loading, isAdmin, refreshUserProfile }}>

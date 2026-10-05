@@ -1,21 +1,20 @@
-import { getAuth } from "firebase/auth";
+import { supabase } from "@/lib/supabase";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api';
 
 // Add request tracking to prevent duplicate simultaneous requests
 const pendingRequests = new Map();
 
-// Helper function to get authentication token
+// Helper function to get authentication token (Supabase session access token)
 const getAuthToken = async (forceRefresh = false): Promise<string | null> => {
-  const auth = getAuth();
-  const user = auth.currentUser;
-  
-  if (!user) {
-    return null;
-  }
-  
   try {
-    return await user.getIdToken(forceRefresh);
+    if (forceRefresh) {
+      const { data, error } = await supabase.auth.refreshSession();
+      if (!error && data.session) return data.session.access_token;
+    }
+    const { data, error } = await supabase.auth.getSession();
+    if (error || !data.session) return null;
+    return data.session.access_token;
   } catch (error) {
     console.error("Error getting auth token:", error);
     return null;
@@ -72,6 +71,7 @@ interface UserData {
   email: string;
   name?: string;
   role?: string;
+  profile_complete?: boolean;
 }
 
 interface ResumeData {
@@ -215,40 +215,10 @@ export const fetcher = async ({
 const apiClient = {
   // Auth API
   auth: {
+    // 404 is left for AuthProvider to handle (it creates the user row via
+    // createFromAuth when the server's auto-provision missed).
     getCurrentUser: async () => {
-      try {
-        const response = await fetcher({ url: '/auth/me' });
-        return response;
-      } catch (error) {
-        if ((error as ApiError).status === 404) {
-          // User not found, attempt to create a new user with current Firebase user data
-          console.log('User not found, attempting to create new user from Firebase auth');
-          const auth = getAuth();
-          const firebaseUser = auth.currentUser;
-          
-          if (!firebaseUser) {
-            console.error('No Firebase user found to create account');
-            return null;
-          }
-          
-          try {
-            // Create new user with Firebase auth data
-            const userData = {
-              uid: firebaseUser.uid,
-              email: firebaseUser.email || '',
-              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-            };
-            
-            const newUser = await apiClient.auth.createFromAuth(userData);
-            console.log('Successfully created new user from Firebase auth:', newUser);
-            return newUser;
-          } catch (createError) {
-            console.error('Failed to create user from Firebase auth:', createError);
-            return null;
-          }
-        }
-        throw error;
-      }
+      return await fetcher({ url: '/auth/me' });
     },
     updateUser: (data: Partial<UserData>) => 
       fetcher({ url: '/auth/me', method: 'PUT', body: data }),
@@ -324,6 +294,15 @@ const apiClient = {
         method: 'GET' 
       });
     },
+    // Company feedback (was Firestore users/{uid}/resumes/feedback)
+    getFeedback: (filename: string) =>
+      fetcher({ url: `/resumes/feedback?filename=${encodeURIComponent(filename)}` }),
+    addFeedback: (data: {
+      filename: string;
+      filelink?: string;
+      company_name: string;
+      feedback: string;
+    }) => fetcher({ url: '/resumes/feedback', method: 'POST', body: data }),
     getResume: (id: string) => fetcher({ url: `/resumes/${id}` }),
     deleteResume: (id: string) => fetcher({ url: `/resumes/${id}`, method: 'DELETE' }),
     getAllForMatching: () => fetcher({ url: '/jobs/resumes/all' }),

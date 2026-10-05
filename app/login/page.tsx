@@ -7,9 +7,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { ArrowRight, Mail, Shield, Upload, CheckCircle, Sun, Moon, ArrowLeft } from 'lucide-react'
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { auth } from "@/FirebaseConfig"
-import { sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink } from "firebase/auth"
-import type { FirebaseError } from "firebase/app"
+import { supabase } from "@/lib/supabase"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/context/auth-context"
 import { useTheme } from "next-themes"
@@ -35,62 +33,41 @@ export default function LoginPage() {
     }
   }, [user, router])
 
-  // Check if the user is coming back from email link
+  // When the magic link brings the user back to /login, the URL fragment
+  // carries the auth response: the supabase client parses it
+  // (detectSessionInUrl) and onAuthStateChange in AuthProvider signs us in,
+  // which trips the redirect above. While the fragment is present we show the
+  // "signing you in" state instead of the form.
+  const hasAuthResponse =
+    mounted && typeof window !== "undefined" && window.location.hash.includes("access_token")
+
   useEffect(() => {
-    // Get the email from localStorage
-    const savedEmail = window.localStorage.getItem("emailForSignIn")
-
-    if (isSignInWithEmailLink(auth, window.location.href)) {
-      // Additional state check
-      if (!savedEmail) {
-        toast({
-          title: "Error",
-          description: "Could not find your email. Please try signing in again.",
-          variant: "destructive",
-        })
-        return
-      }
-
-      setIsLoading(true)
-      // Sign in with email link
-      signInWithEmailLink(auth, savedEmail, window.location.href)
-        .then(() => {
-          // Clear email from storage
-          window.localStorage.removeItem("emailForSignIn")
-          // Redirect to dashboard
-          router.push("/upload-resume")
-          toast({
-            title: "Success",
-            description: "You have been successfully signed in!",
-          })
-        })
-        .catch((error) => {
-          toast({
-            title: "Error",
-            description: error.message || "Failed to sign in. Please try again.",
-            variant: "destructive",
-          })
-        })
-        .finally(() => {
-          setIsLoading(false)
-        })
+    if (!mounted) return
+    const hash = new URLSearchParams(window.location.hash.slice(1))
+    const errorDescription = hash.get("error_description")
+    if (errorDescription) {
+      toast({
+        title: "Sign-in failed",
+        description: errorDescription,
+        variant: "destructive",
+      })
+      window.history.replaceState(null, "", window.location.pathname)
     }
-  }, [router, toast])
+  }, [mounted, toast])
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
 
     try {
-      const actionCodeSettings = {
-        url: `${window.location.origin}/login`, // Redirect back to login page to handle the sign-in
-        handleCodeInApp: true,
-      }
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/login`,
+        },
+      })
 
-      await sendSignInLinkToEmail(auth, email, actionCodeSettings)
-
-      // Save the email for later use
-      window.localStorage.setItem("emailForSignIn", email)
+      if (error) throw error
 
       setSubmitted(true)
       toast({
@@ -98,10 +75,9 @@ export default function LoginPage() {
         description: "We've sent you a magic link to sign in.",
       })
     } catch (error: unknown) {
-      const firebaseError = error as FirebaseError
       toast({
         title: "Error",
-        description: firebaseError.message || "Something went wrong. Please try again.",
+        description: (error as Error).message || "Something went wrong. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -109,8 +85,8 @@ export default function LoginPage() {
     }
   }
 
-  // If loading, show loading state
-  if (isLoading && isSignInWithEmailLink(auth, window.location.href)) {
+  // If the magic-link response is being processed, show loading state
+  if (hasAuthResponse) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center">

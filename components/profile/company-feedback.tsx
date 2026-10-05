@@ -5,20 +5,13 @@ import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/use-toast'
-import { db } from '@/FirebaseConfig'
-import { doc, getDoc, setDoc, updateDoc, Timestamp } from 'firebase/firestore'
+import apiClient from '@/lib/api-client'
 import { useAuth } from '@/context/auth-context'
 
 interface FeedbackItem {
   company_name: string;
   feedback: string;
-  timestamp: Timestamp;
-}
-
-interface ResumeWithFeedback {
-  filename: string;
-  filelink: string;
-  feedback: FeedbackItem[];
+  created_at: string;
 }
 
 interface CompanyFeedbackProps {
@@ -37,16 +30,8 @@ export function CompanyFeedback({ filename, filelink }: CompanyFeedbackProps) {
       if (!user) return;
 
       try {
-        const feedbackDocRef = doc(db, "users", user.uid, "resumes", "feedback");
-        const docSnap = await getDoc(feedbackDocRef);
-
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          const resumeFeedback = data.resumes?.find((r: ResumeWithFeedback) => r.filename === filename);
-          if (resumeFeedback) {
-            setFeedbacks(resumeFeedback.feedback || []);
-          }
-        }
+        const data = await apiClient.resumes.getFeedback(filename)
+        setFeedbacks((data as FeedbackItem[]) || [])
       } catch (error) {
         console.error("Error fetching feedbacks:", error);
       }
@@ -59,50 +44,16 @@ export function CompanyFeedback({ filename, filelink }: CompanyFeedbackProps) {
     if (!user || !companyName.trim() || !newFeedback.trim()) return;
 
     try {
-      const feedbackDocRef = doc(db, "users", user.uid, "resumes", "feedback");
-      const docSnap = await getDoc(feedbackDocRef);
-
-      const newFeedbackItem: FeedbackItem = {
+      const row = await apiClient.resumes.addFeedback({
+        filename,
+        filelink,
         company_name: companyName.trim(),
         feedback: newFeedback.trim(),
-        timestamp: Timestamp.now()
-      };
-
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        const existingResumeIndex = data.resumes?.findIndex(
-          (r: ResumeWithFeedback) => r.filename === filename
-        );
-
-        const updatedResumes = [...(data.resumes || [])];
-
-        if (existingResumeIndex !== -1) {
-          // Update existing resume feedback
-          updatedResumes[existingResumeIndex].feedback.push(newFeedbackItem);
-        } else {
-          // Add new resume with feedback
-          updatedResumes.push({
-            filename,
-            filelink,
-            feedback: [newFeedbackItem]
-          });
-        }
-
-        await updateDoc(feedbackDocRef, { resumes: updatedResumes });
-      } else {
-        // Create new document
-        await setDoc(feedbackDocRef, {
-          resumes: [{
-            filename,
-            filelink,
-            feedback: [newFeedbackItem]
-          }]
-        });
-      }
+      })
 
       // Update local state
-      setFeedbacks([...feedbacks, newFeedbackItem]);
-      
+      setFeedbacks([...feedbacks, row as FeedbackItem])
+
       // Clear inputs
       setCompanyName("");
       setNewFeedback("");
@@ -121,11 +72,12 @@ export function CompanyFeedback({ filename, filelink }: CompanyFeedbackProps) {
     }
   };
 
-  const formatDate = (timestamp: Timestamp) => {
-    if (!timestamp || !timestamp.toDate) {
+  const formatDate = (createdAt: string) => {
+    if (!createdAt) {
       return '';
     }
-    return timestamp.toDate().toLocaleDateString();
+    const date = new Date(createdAt);
+    return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
   };
 
   return (
@@ -147,7 +99,7 @@ export function CompanyFeedback({ filename, filelink }: CompanyFeedbackProps) {
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-medium">{feedback.company_name}</h3>
               <span className="text-xs text-muted-foreground">
-                {formatDate(feedback.timestamp)}
+                {formatDate(feedback.created_at)}
               </span>
             </div>
             <p className="text-sm">{feedback.feedback}</p>
@@ -181,5 +133,3 @@ export function CompanyFeedback({ filename, filelink }: CompanyFeedbackProps) {
     </div>
   );
 }
-
-

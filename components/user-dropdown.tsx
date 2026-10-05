@@ -10,14 +10,13 @@ import {
   LogOut, 
   ChevronDown 
 } from "lucide-react"
-import type { User } from "firebase/auth"
-import { auth } from "@/FirebaseConfig"
-import { signOut } from "firebase/auth"
+import type { AuthUser } from "@/lib/supabase"
+import { supabase } from "@/lib/supabase"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
 
 interface UserDropdownProps {
-  user: User
+  user: AuthUser
 }
 
 export function UserDropdown({ user }: UserDropdownProps) {
@@ -27,7 +26,8 @@ export function UserDropdown({ user }: UserDropdownProps) {
 
   const handleSignOut = async () => {
     try {
-      await signOut(auth)
+      const { error } = await supabase.auth.signOut()
+      if (error) throw error
       toast({
         title: "Signed out successfully",
         variant: "default",

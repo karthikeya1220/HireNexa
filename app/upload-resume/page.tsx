@@ -12,8 +12,7 @@ import { UserDropdown } from "@/components/user-dropdown"
 import Link from "next/link"
 import { useTheme } from "next-themes"
 import { RecentFileCard } from "@/components/recent-file-card"
-import { collection, query, getDocs, orderBy, limit } from "firebase/firestore"
-import { db } from "@/FirebaseConfig"
+import apiClient from "@/lib/api-client"
 
 // Define the RecentUpload interface
 interface RecentUpload {
@@ -46,48 +45,44 @@ export default function UploadResumePage() {
     }
   }, [isMobile])
 
-  // Fetch recent uploads from Firestore
+  // Fetch recent uploads via the API
   useEffect(() => {
     const fetchRecentUploads = async () => {
       if (!user) return
 
       setIsLoadingUploads(true)
       try {
-        // Reference to the user's resumes document
-        const userResumesRef = collection(db, "users", user.uid, "resumes")
+        const data = await apiClient.resumes.getUserResumes(user.uid)
+        const rows = (data as Array<{
+          _id: string
+          filename: string
+          uploaded_at: string
+        }>) || []
 
-        // Create a query to get the most recent uploads
-        const q = query(userResumesRef, orderBy("uploadedAt", "desc"), limit(5))
-
-        const querySnapshot = await getDocs(q)
-
-        const uploads: RecentUpload[] = []
-        querySnapshot.forEach((doc) => {
-          const data = doc.data()
-
+        const uploads: RecentUpload[] = rows.slice(0, 5).map((row) => {
           // Format the date
-          const uploadDate = data.uploadedAt?.toDate() || new Date()
+          const uploadDate = row.uploaded_at ? new Date(row.uploaded_at) : new Date()
           const formattedDate = formatDate(uploadDate)
 
           // Format the file size (mock for now)
           const fileSize = "250 KB" // This would ideally come from the actual file metadata
 
           // Determine file type from filename
-          const filename = data.filename || "Unknown"
+          const filename = row.filename || "Unknown"
           const fileExtension = filename.split(".").pop()?.toLowerCase()
           const fileType = fileExtension === "pdf" ? "pdf" : fileExtension === "docx" ? "docx" : "doc"
 
           // Calculate match score (mock for now)
           const matchScore = Math.floor(Math.random() * 30) + 70 // Random score between 70-100
 
-          uploads.push({
-            id: doc.id,
+          return {
+            id: row._id,
             filename,
             date: formattedDate,
             fileSize,
             fileType: fileType as "pdf" | "docx" | "doc",
             matchScore,
-          })
+          }
         })
 
         setRecentUploads(uploads)

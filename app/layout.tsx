@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import "./globals.css";
 import { AuthProvider } from "@/context/auth-context"
-import { FirebaseProvider } from "@/components/providers/firebase-provider"
 import { ThemeProvider } from "@/components/providers/theme-provider"
 import { Toaster } from "sonner"
 
@@ -25,12 +24,10 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <FirebaseProvider>
-            <AuthProvider>
-              {children}
-              <Toaster />
-            </AuthProvider>
-          </FirebaseProvider>
+          <AuthProvider>
+            {children}
+            <Toaster />
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

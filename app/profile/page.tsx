@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useAuth } from "@/context/auth-context"
-import { doc, getDoc, updateDoc } from "firebase/firestore"
-import { db } from "@/FirebaseConfig"
+import apiClient from "@/lib/api-client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { toast } from "sonner"
@@ -13,7 +12,6 @@ interface UserProfile {
   name: string
   email: string
   role: string
-  profileComplete?: boolean
   updatedAt?: string
 }
 
@@ -37,9 +35,13 @@ export default function ProfilePage() {
       }
 
       try {
-        const userDoc = await getDoc(doc(db, "users", user.uid))
-        if (userDoc.exists()) {
-          setProfile(userDoc.data() as UserProfile)
+        const data = await apiClient.auth.getCurrentUser() as Partial<UserProfile> | null
+        if (data) {
+          setProfile({
+            name: data.name || "",
+            email: data.email || "",
+            role: data.role || ""
+          })
         }
       } catch (error) {
         console.error("Error fetching profile:", error)
@@ -58,12 +60,7 @@ export default function ProfilePage() {
     setIsSaving(true)
     try {
       // Never write `role` from the client — roles are server-managed only.
-      const editableFields: Record<string, unknown> = { ...profile }
-      delete editableFields.role
-      await updateDoc(doc(db, "users", user.uid), {
-        ...editableFields,
-        updatedAt: new Date().toISOString()
-      })
+      await apiClient.auth.updateUser({ name: profile.name })
       toast.success("Profile updated successfully")
       setIsEditing(false)
     } catch (error) {

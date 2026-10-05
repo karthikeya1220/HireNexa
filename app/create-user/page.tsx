@@ -3,17 +3,9 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/context/auth-context"
-import { doc, setDoc } from "firebase/firestore"
-import { db } from "@/FirebaseConfig"
+import apiClient from "@/lib/api-client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { toast } from "sonner"
 import { DashboardSidebar } from "@/components/dashboard-sidebar"
 import { useMediaQuery } from "@/hooks/use-media-query"
@@ -22,7 +14,6 @@ import { motion } from "framer-motion"
 interface UserProfile {
   name: string
   email: string
-  role: string
 }
 
 export default function UserManagementPage() {
@@ -33,35 +24,13 @@ export default function UserManagementPage() {
   const isMobile = useMediaQuery("(max-width: 768px)")
   const [profile, setProfile] = useState<UserProfile>({
     name: "",
-    email: user?.email || "",
-    role: ""
+    email: user?.email || ""
   })
 
-  const roles = [
-    { id: "recruiter", label: "Recruiter" },
-    { id: "hiring_manager", label: "Hiring Manager" },
-    { id: "hr", label: "HR" },
-    { id: "admin", label: "Admin" }
-  ]
-
   useEffect(() => {
-    const fetchUserProfile = async () => {
-      if (!user) {
-        router.push("/auth")
-        return
-      }
-
-      try {
-        // const userDoc = await getDoc(doc(db, "users", user.uid))
-        // if (userDoc.exists() && userDoc.data().profileComplete) {
-        //   router.push("/dashboard")
-        // }
-      } catch (error) {
-        console.error("Error fetching user profile:", error)
-      }
+    if (!user) {
+      router.push("/auth")
     }
-
-    fetchUserProfile()
   }, [user, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -71,10 +40,11 @@ export default function UserManagementPage() {
     try {
       if (!user) throw new Error("No authenticated user")
 
-      await setDoc(doc(db, "users", user.uid), {
-        ...profile,
-        profileComplete: true,
-        updatedAt: new Date().toISOString()
+      // Only identity/profile fields — roles are server-managed only.
+      await apiClient.auth.updateUser({
+        name: profile.name,
+        email: profile.email || user.email || "",
+        profile_complete: true
       })
 
       toast.success("Profile updated successfully")
@@ -137,25 +107,9 @@ export default function UserManagementPage() {
               </div>
 
               <div className="space-y-2">
-                <label htmlFor="role" className="text-sm font-medium">
-                  Role
-                </label>
-                <Select
-                  value={profile.role}
-                  onValueChange={(value) => setProfile({ ...profile, role: value })}
-                  required
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select your role" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {roles.map((role) => (
-                      <SelectItem key={role.id} value={role.id}>
-                        {role.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Roles are assigned by an administrator.
+                </p>
               </div>
 
               <Button

@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from "react"
 import { useAuth } from "@/context/auth-context"
-import { doc, getDoc } from "firebase/firestore"
-import { db } from "@/FirebaseConfig"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { motion } from "framer-motion"
@@ -24,55 +22,20 @@ import {
   Key,
 } from "lucide-react"
 import { useMobile } from "@/hooks/use-mobile"
-import { toast } from "@/components/ui/use-toast"
 
 interface DashboardSidebarProps {
   isOpen: boolean
   setIsOpen: (isOpen: boolean) => void
 }
 
-interface UserProfile {
-  name: string
-  email: string
-  role: string
-  profileComplete?: boolean
-}
-
 export function DashboardSidebar({ isOpen, setIsOpen }: DashboardSidebarProps) {
-  const { user } = useAuth()
+  // AuthProvider already loads the profile + admin flag from the API — no
+  // separate Firestore read needed here.
+  const { user, isAdmin, userProfile: profile } = useAuth()
   const isMobile = useMobile()
   const pathname = usePathname()
   const [activeItem, setActiveItem] = useState("")
   const [isHovering, setIsHovering] = useState<string | null>(null)
-  const [profile, setProfile] = useState<UserProfile | null>(null)
-  const [isAdmin, setIsAdmin] = useState(false)
-
-  useEffect(() => {
-    const fetchUserProfile = async () => {
-      if (!user) return
-
-      try {
-        // Updated path to match your database structure
-        const userProfileRef = doc(db, "users", user.uid, "userProfile", "data")
-        const userProfileDoc = await getDoc(userProfileRef)
-
-        if (userProfileDoc.exists()) {
-          const userData = userProfileDoc.data() as UserProfile
-          setProfile(userData)
-          setIsAdmin(userData.role === "admin")
-        }
-      } catch (error) {
-        console.error("Error fetching user profile:", error)
-        toast({
-          title: "Error",
-          description: "Failed to load user profile",
-          variant: "destructive",
-        })
-      }
-    }
-
-    fetchUserProfile()
-  }, [user])
 
   useEffect(() => {
     // Map paths to navigation items

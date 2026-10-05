@@ -34,13 +34,6 @@ interface ResumeQueueItem {
   fileHash?: string
 }
 
-// Add this interface near the top of the file with other type definitions
-// interface FirebaseError {
-//   code: string
-//   message: string
-//   name: string
-// }
-
 // Modify the Vendor interface to include _id instead of id
 interface Vendor {
   _id: string
