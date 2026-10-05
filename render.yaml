@@ -1,0 +1,38 @@
+# Render blueprint — one-click deploy of the Express API ("full express").
+# Render: New + → Blueprint → select this repo; Render parses this file.
+# Secrets are prompted at creation (sync: false) — they never live in git.
+services:
+  - type: web
+    name: hirenexa-api
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci && npm run build:server
+    startCommand: node dist/server/server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: AI_DAILY_QUOTA
+        value: "50"
+      # Supabase (fail-fast at boot if missing — see server/db.ts)
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Gemini (AI resume/match analysis)
+      - key: GEMINI_API_KEY
+        sync: false
+      # S3 (resume storage)
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      # Browser origins allowed to call the API, comma-separated.
+      # Set to your Vercel URL, e.g. https://hirenexa.vercel.app
+      - key: CORS_ORIGINS
+        sync: false

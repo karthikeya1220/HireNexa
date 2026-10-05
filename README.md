@@ -393,16 +393,25 @@ npm start
 
 ### Backend Deployment (Render/Railway/Heroku)
 
-#### Option 1: Render (Recommended)
+#### Option 1: Render (Recommended — one-click blueprint)
 
-1. Create a new Web Service on [Render](https://render.com/)
-2. Connect your GitHub repository
-3. Configure:
-   - **Build Command**: `npm run build:server`
-   - **Start Command**: `npm run start:server`
-   - **Environment**: Node
-4. Add environment variables from `.env`
-5. Deploy!
+1. Push this repository to GitHub (Render reads `render.yaml` at the repo root)
+2. In [Render](https://render.com/): **New + → Blueprint →** select the repository
+3. Enter the prompted secrets and set:
+   - `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` (Supabase → Project Settings → API)
+   - `GEMINI_API_KEY`, AWS keys + `S3_BUCKET_NAME`
+   - `CORS_ORIGINS` = your Vercel URL, e.g. `https://hirenexa.vercel.app`
+4. Deploy — build `npm ci && npm run build:server`, start `node dist/server/server.js`,
+   health check `/api/health` (returns 503 until the Supabase env vars are valid)
+5. Point the frontend at it: set `NEXT_PUBLIC_API_URL=https://<your-service>.onrender.com/api`
+   in Vercel → Settings → Environment Variables, then **redeploy the frontend**
+   (NEXT_PUBLIC_* values are baked in at build time)
+
+Manual alternative (no blueprint): Build Command `npm run build:server`,
+Start Command `npm run start:server`, Node environment, env vars from `.env`.
+
+Note: the free plan spins the service down after inactivity (~50s cold start on
+the first request).
 
 #### Option 2: Railway
 
