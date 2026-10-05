@@ -353,7 +353,7 @@ You'll also need accounts for:
 7. **Access the application**
    - Open your browser and navigate to `http://localhost:3000`
    - Sign in with your email (a magic link is sent to your inbox)
-   - Grant yourself admin with `node api/scripts/make-admin.js <email>`
+   - Grant yourself admin with `node server/scripts/make-admin.js <email>`
    - Start exploring HireNexa!
 
 ### Building for Production

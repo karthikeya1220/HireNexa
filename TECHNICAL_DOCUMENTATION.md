@@ -163,12 +163,12 @@
 - **Utils**: Helper functions and API client (`/utils`, `/lib`)
 
 **Application Layer (Backend API)**
-- **Routes**: Define API endpoints (`/api/routes`)
-- **Controllers**: Business logic and request handling (`/api/controllers`)
-- **Middleware**: Authentication, authorization, validation (`/api/middlewares`)
-- **Models**: TypeScript row types + row↔API mappers (`/api/models`)
-- **Utils**: Helper functions, AI integration (`/api/utils`)
-- **DB client**: Shared Supabase service-role client + Postgres error mapping (`/api/db.ts`)
+- **Routes**: Define API endpoints (`server/routes`)
+- **Controllers**: Business logic and request handling (`server/controllers`)
+- **Middleware**: Authentication, authorization, validation (`server/middlewares`)
+- **Models**: TypeScript row types + row↔API mappers (`server/models`)
+- **Utils**: Helper functions, AI integration (`server/utils`)
+- **DB client**: Shared Supabase service-role client + Postgres error mapping (`server/db.ts`)
 
 **Data Layer**
 - **Supabase Postgres Tables**: users, resumes, jobs, job_candidates, vendors, company_feedback (schema in `/supabase/schema.sql`)
@@ -249,7 +249,7 @@ Frontend Request → Add Authorization: Bearer <access token> header
 
 **3. Token Verification (Backend Middleware)**
 ```typescript
-// api/middlewares/authMiddleware.ts
+// server/middlewares/authMiddleware.ts
 1. Extract token from Authorization header
 2. Verify with jose: jwtVerify(token, projectJwks, { audience: 'authenticated' })
    (JWKS signature check — asymmetric ES256 + expiry + audience; stateless,
@@ -316,7 +316,7 @@ fetch('/api/resumes', {
 
 **Backend (Verification)**
 ```typescript
-// api/middlewares/authMiddleware.ts
+// server/middlewares/authMiddleware.ts
 const { payload } = await jwtVerify(token, projectJwks, { audience: 'authenticated' });
 const user = await ensureUserRecord(payload.sub, payload.email);
 req.user = user;
@@ -413,7 +413,7 @@ next();
    → GET /api/auth/users (admin only) → resolve email → uid
    → PUT /api/auth/users/role { uid, role: 'admin' | 'recruiter' | 'user' }
    → UPDATE public.users SET role = ... WHERE uid = ...
-   (or offline: node api/scripts/make-admin.js <email>)
+   (or offline: node server/scripts/make-admin.js <email>)
 ```
 
 ### Data Synchronization

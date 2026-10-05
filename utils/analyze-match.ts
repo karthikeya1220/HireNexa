@@ -1,7 +1,7 @@
 import apiClient from "../lib/api-client";
 
 // Thin client wrappers: Gemini is called server-side only (see
-// api/utils/gemini.ts) — the API key never reaches the browser.
+// server/utils/gemini.ts) — the API key never reaches the browser.
 
 export interface MatchAnalysis {
   filename: string;

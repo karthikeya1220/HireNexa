@@ -5,13 +5,13 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:server\"",
     "dev:frontend": "next dev",
-    "dev:server": "nodemon --exec ts-node --project api/tsconfig.json api/server.ts",
+    "dev:server": "nodemon --exec ts-node --project server/tsconfig.json server/server.ts",
     "build": "next build && npm run build:server",
     "build:frontend": "next build",
-    "build:server": "tsc -p api/tsconfig.json",
+    "build:server": "tsc -p server/tsconfig.json",
     "start": "concurrently \"npm run start:frontend\" \"npm run start:server\"",
     "start:frontend": "next start",
-    "start:server": "node dist/api/server.js",
+    "start:server": "node dist/server/server.js",
     "lint": "eslint .",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/*.test.ts"
   },

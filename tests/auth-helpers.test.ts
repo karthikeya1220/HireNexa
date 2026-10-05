@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isSameUser, isAdminUser, canModifyResource } from '../api/utils/auth-helpers.ts';
+import { isSameUser, isAdminUser, canModifyResource } from '../server/utils/auth-helpers.ts';
 
 test('isSameUser matches equal ids only', () => {
   assert.equal(isSameUser('a', 'a'), true);

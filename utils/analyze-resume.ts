@@ -74,7 +74,7 @@ export interface AnalyzeResumeResponse {
 }
 
 // Thin client wrapper: hashing, Gemini analysis, S3 upload and persistence
-// all happen server-side now (see api/controllers/resumeController.ts), so
+// all happen server-side now (see server/controllers/resumeController.ts), so
 // no AWS/Gemini credentials are bundled into the browser.
 export async function analyzeResume(
   file: File,

@@ -8,7 +8,7 @@ data follows.
 
 ## What the script does
 
-`api/scripts/migrate-to-supabase.js` (one-shot, idempotent-ish):
+`server/scripts/migrate-to-supabase.js` (one-shot, idempotent-ish):
 
 1. Reads Mongo collections `users`, `jobs`, `jobcandidates`, `resumes`, `vendors`.
 2. Optionally reads Firestore `users/{uid}` docs (name/role/profileComplete) and
@@ -71,7 +71,7 @@ The old Firebase service-account JSON in `misc/` works too if you point
 1. **Dry run first** — prints the full plan (counts, warnings) without writing:
 
    ```bash
-   node api/scripts/migrate-to-supabase.js --dry-run
+   node server/scripts/migrate-to-supabase.js --dry-run
    ```
 
 2. **Review the output**: account counts, uid mappings, warnings about
@@ -80,7 +80,7 @@ The old Firebase service-account JSON in `misc/` works too if you point
 3. **Run for real**:
 
    ```bash
-   node api/scripts/migrate-to-supabase.js
+   node server/scripts/migrate-to-supabase.js
    ```
 
    Useful flags:
@@ -90,8 +90,8 @@ The old Firebase service-account JSON in `misc/` works too if you point
 
 4. **Verify**:
    ```bash
-   node api/scripts/make-admin.js --list     # users + roles
-   node api/scripts/make-admin.js you@example.com   # grant yourself admin
+   node server/scripts/make-admin.js --list     # users + roles
+   node server/scripts/make-admin.js you@example.com   # grant yourself admin
    ```
    Then sign in with the magic link and check jobs/resumes/vendors load.
 

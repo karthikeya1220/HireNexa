@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Response, NextFunction } from 'express';
-import type { AuthenticatedRequest } from '../api/middlewares/authMiddleware.ts';
-import { aiDailyQuota } from '../api/middlewares/aiQuota.ts';
+import type { AuthenticatedRequest } from '../server/middlewares/authMiddleware.ts';
+import { aiDailyQuota } from '../server/middlewares/aiQuota.ts';
 
 type ResMock = {
   statusCode: number;

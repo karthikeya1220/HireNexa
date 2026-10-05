@@ -9,6 +9,6 @@
     "moduleResolution": "node",
     "esModuleInterop": true
   },
-  "include": ["api/**/*.ts"],
+  "include": ["server/**/*.ts"],
   "exclude": ["node_modules"]
 } 
