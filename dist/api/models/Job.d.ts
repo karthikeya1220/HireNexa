@@ -1,5 +1,5 @@
-import mongoose, { Document } from 'mongoose';
-export interface IJob extends Document {
+export interface IJob {
+    _id: string;
     title: string;
     company: string;
     location: string;
@@ -11,14 +11,14 @@ export interface IJob extends Document {
     requirements: string[];
     benefits: string[];
     skills_required: string[];
-    nice_to_have_skills?: string[];
-    working_hours?: string;
-    mode_of_work?: string;
-    deadline?: string;
-    key_responsibilities?: string[];
-    about_company?: string;
-    created_at: Date;
-    updated_at: Date;
+    nice_to_have_skills?: string[] | null;
+    working_hours?: string | null;
+    mode_of_work?: string | null;
+    deadline?: string | null;
+    key_responsibilities?: string[] | null;
+    about_company?: string | null;
+    created_at: string;
+    updated_at: string;
     total_applications?: number;
     shortlisted?: number;
     rejected?: number;
@@ -31,5 +31,8 @@ export interface IJob extends Document {
     assigned_recruiters?: string[];
     candidates?: Array<Record<string, unknown>>;
 }
-declare const _default: mongoose.Model<any, {}, {}, {}, any, any>;
-export default _default;
+export interface JobRow extends Omit<IJob, '_id'> {
+    id: string;
+}
+export declare const toJob: (row: JobRow) => IJob;
+export type JobWrite = Omit<JobRow, 'id' | 'created_at' | 'updated_at'> & Partial<Pick<JobRow, 'created_at' | 'updated_at'>>;

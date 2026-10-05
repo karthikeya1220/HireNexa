@@ -1,44 +1,10 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
-const mongoose_1 = __importDefault(require("mongoose"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const helmet_1 = __importDefault(require("helmet"));
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
@@ -47,16 +13,11 @@ const resume_1 = __importDefault(require("./routes/resume"));
 const job_1 = __importDefault(require("./routes/job"));
 const vendor_1 = __importDefault(require("./routes/vendor"));
 const cors_2 = require("./config/cors");
+// Importing db.ts validates Supabase env (fail-fast in production) and creates
+// the service-role client every controller shares.
+const db_1 = require("./db");
 // Load environment variables
 dotenv_1.default.config();
-// Fail fast on missing configuration — never fall back to a local dev DB in
-// production (a silent localhost fallback previously made this guard dead code).
-const MONGODB_URI = process.env.MONGODB_URI ||
-    (process.env.NODE_ENV === 'production' ? undefined : 'mongodb://localhost:27017/test');
-if (!MONGODB_URI) {
-    console.error('FATAL: MONGODB_URI is not set');
-    process.exit(1);
-}
 // Express app setup
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 5001;
@@ -95,9 +56,21 @@ app.use('/api/resumes/analyze', express_1.default.json({ limit: '15mb' }));
 app.use('/api/jobs/match-analysis', express_1.default.json({ limit: '5mb' }));
 app.use(express_1.default.json({ limit: '1mb' }));
 app.use(express_1.default.urlencoded({ extended: true, limit: '100kb' }));
-// Root endpoint - health check (reports DB readiness)
-app.get('/api/health', (req, res) => {
-    const dbReady = mongoose_1.default.connection.readyState === 1;
+// Root endpoint - health check (verifies the Supabase connection with a
+// trivial head query through the service-role client)
+app.get('/api/health', async (req, res) => {
+    let dbReady = false;
+    try {
+        const { error } = await db_1.supabaseAdmin
+            .from('users')
+            .select('uid', { count: 'exact', head: true });
+        dbReady = !error;
+        if (error)
+            console.error('[HEALTH] Supabase check failed:', error.message);
+    }
+    catch (error) {
+        console.error('[HEALTH] Supabase check threw:', error);
+    }
     res.status(dbReady ? 200 : 503).json({
         status: dbReady ? 'ok' : 'degraded',
         message: 'API is running',
@@ -124,72 +97,46 @@ app.use((err, req, res, next) => {
     if ((err === null || err === void 0 ? void 0 : err.type) === 'entity.parse.failed') {
         return res.status(400).json({ error: 'Invalid JSON body' });
     }
-    // Malformed ObjectId params
-    if ((err === null || err === void 0 ? void 0 : err.name) === 'CastError') {
-        return res.status(400).json({ error: 'Invalid id' });
-    }
-    // Mongoose validation failures
-    if ((err === null || err === void 0 ? void 0 : err.name) === 'ValidationError') {
-        return res.status(400).json({ error: 'Validation failed', details: err.message });
-    }
-    // Duplicate key
-    if ((err === null || err === void 0 ? void 0 : err.code) === 11000) {
+    // Postgres errors surfaced from controllers: unique violation / check
+    // violation / malformed uuid
+    if ((err === null || err === void 0 ? void 0 : err.code) === '23505') {
         return res.status(409).json({ error: 'Duplicate value' });
+    }
+    if ((err === null || err === void 0 ? void 0 : err.code) === '23514' || (err === null || err === void 0 ? void 0 : err.code) === '22P02') {
+        return res.status(400).json({ error: 'Validation failed', details: err.message });
     }
     // Never leak internal error details to clients
     console.error(err);
     const status = (err === null || err === void 0 ? void 0 : err.status) || (err === null || err === void 0 ? void 0 : err.statusCode) || 500;
     res.status(status).json({ error: status === 500 ? 'Something went wrong' : err.message });
 });
-// Initialize MongoDB connection
-mongoose_1.default.connect(MONGODB_URI)
-    .then(async () => {
-    console.log('Connected to MongoDB');
-    // Run database initialization checks
-    try {
-        const { initializeDatabase } = await Promise.resolve().then(() => __importStar(require('./utils/db-init')));
-        await initializeDatabase();
-    }
-    catch (initError) {
-        console.error('Error during database initialization:', initError);
-    }
-    // Start the server after DB checks are complete
-    const server = app.listen(PORT, () => {
-        console.log(`Server running at http://localhost:${PORT}`);
-        console.log(`CORS enabled for frontend access`);
+// Start the server. There is no connection handshake to wait for: the
+// Supabase client is stateless (HTTP) and every query is per-request.
+const server = app.listen(PORT, () => {
+    console.log(`Server running at http://localhost:${PORT}`);
+    console.log(`CORS enabled for frontend access`);
+});
+// Timeouts: avoid slowloris holding connections open forever. 120s leaves
+// room for large resume uploads + AI analysis while staying bounded.
+server.headersTimeout = 30 * 1000;
+server.requestTimeout = 120 * 1000;
+// Graceful shutdown: stop accepting connections, then drain in-flight
+// requests so deploys don't kill active work.
+const shutdown = (signal) => {
+    console.log(`${signal} received, shutting down gracefully`);
+    server.close(() => {
+        process.exit(0);
     });
-    // Timeouts: avoid slowloris holding connections open forever. 120s leaves
-    // room for large resume uploads + AI analysis while staying bounded.
-    server.headersTimeout = 30 * 1000;
-    server.requestTimeout = 120 * 1000;
-    // Graceful shutdown: stop accepting connections, drain in-flight requests,
-    // then close the DB connection so deploys don't kill active work.
-    const shutdown = (signal) => {
-        console.log(`${signal} received, shutting down gracefully`);
-        server.close(async () => {
-            try {
-                await mongoose_1.default.disconnect();
-            }
-            catch (e) {
-                console.error('Error disconnecting from MongoDB:', e);
-            }
-            process.exit(0);
-        });
-        // Force-exit if draining hangs
-        setTimeout(() => process.exit(1), 10 * 1000).unref();
-    };
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    process.on('SIGINT', () => shutdown('SIGINT'));
-    process.on('unhandledRejection', (reason) => {
-        console.error('Unhandled rejection:', reason);
-    });
-    process.on('uncaughtException', (err) => {
-        console.error('Uncaught exception:', err);
-        shutdown('uncaughtException');
-    });
-})
-    .catch((err) => {
-    console.error('MongoDB connection error:', err);
-    process.exit(1);
+    // Force-exit if draining hangs
+    setTimeout(() => process.exit(1), 10 * 1000).unref();
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err);
+    shutdown('uncaughtException');
 });
 exports.default = app;

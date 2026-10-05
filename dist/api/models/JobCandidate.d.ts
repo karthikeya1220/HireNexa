@@ -1,4 +1,3 @@
-import mongoose, { Document, Types } from 'mongoose';
 export interface IMatchAnalysis {
     matchPercentage: number;
     matchingSkills: string[];
@@ -12,7 +11,7 @@ export interface IWorkExperience {
     position: string;
     duration?: {
         start: string;
-        end?: string;
+        end: string;
     };
     responsibilities?: string[];
     technologies?: string[];
@@ -24,14 +23,14 @@ export interface IEducation {
 }
 export interface IStatusHistoryEntry {
     status: string;
-    timestamp: Date;
+    timestamp: Date | string;
     updatedBy: string;
     additionalData?: Record<string, unknown>;
 }
 export interface ITracking {
     status: string;
     statusHistory: IStatusHistoryEntry[];
-    lastUpdated: Date;
+    lastUpdated: Date | string;
     updatedBy: string;
     rateConfirmed?: number;
     interviewDate?: string;
@@ -39,7 +38,8 @@ export interface ITracking {
     notes?: string;
     additionalData?: Record<string, unknown>;
 }
-export interface ICandidate extends Document {
+export interface ICandidate {
+    _id: string;
     filename: string;
     name: string;
     email: string;
@@ -50,11 +50,24 @@ export interface ICandidate extends Document {
         work_experience_details: IWorkExperience[];
     };
     tracking?: ITracking;
-    jobId: Types.ObjectId;
-    userId: string;
-    userEmail?: string;
-    created_at: Date;
-    updated_at: Date;
+    jobId?: string;
+    userId?: string | null;
+    userEmail?: string | null;
+    created_at: string;
+    updated_at: string;
 }
-declare const JobCandidate: mongoose.Model<any, {}, {}, {}, any, any>;
-export default JobCandidate;
+export interface JobCandidateRow {
+    id: string;
+    job_id: string;
+    filename: string;
+    name: string;
+    email: string;
+    match_analysis: IMatchAnalysis;
+    analysis: ICandidate['analysis'];
+    tracking?: ITracking | null;
+    user_id?: string | null;
+    user_email?: string | null;
+    created_at: string;
+    updated_at: string;
+}
+export declare const toCandidate: (row: JobCandidateRow) => ICandidate;

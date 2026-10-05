@@ -18,6 +18,9 @@ router.get('/admin/all', authMiddleware_1.isAdmin, resumeController_1.getAllResu
 router.post('/analyze', aiQuota_1.aiDailyQuota, resumeController_1.analyzeAndUpload);
 // Resume routes with query parameters (must come before routes with :id)
 router.get('/', resumeController_1.getUserResumes);
+// Company feedback for one resume (was Firestore) — must come before /:id
+router.get('/feedback', resumeController_1.getFeedback);
+router.post('/feedback', resumeController_1.addFeedback);
 // Standard resume routes
 router.post('/check-duplicate', resumeController_1.checkDuplicateResume);
 router.post('/', resumeController_1.saveResume);

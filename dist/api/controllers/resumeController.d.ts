@@ -21,4 +21,6 @@ export declare const getUserResumes: (req: AuthRequest, res: Response) => Promis
 export declare const getResumeById: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const deleteResume: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const getAllResumes: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
+export declare const getFeedback: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
+export declare const addFeedback: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
 export {};

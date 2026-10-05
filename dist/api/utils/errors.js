@@ -1,11 +1,9 @@
 "use strict";
-// Narrow helpers for inspecting unknown caught errors (duplicate-key codes,
-// Mongo CastErrors, AWS S3 error names) without resorting to `any`.
+// Narrow helpers for inspecting unknown caught errors (AWS S3 error names)
+// without resorting to `any`.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.errHttpStatus = exports.errName = exports.errCode = void 0;
+exports.errHttpStatus = exports.errName = void 0;
 const isRecord = (value) => typeof value === 'object' && value !== null;
-const errCode = (error) => isRecord(error) && 'code' in error ? error.code : undefined;
-exports.errCode = errCode;
 const errName = (error) => {
     if (error instanceof Error)
         return error.name;

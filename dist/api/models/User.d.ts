@@ -1,11 +1,11 @@
-import mongoose from 'mongoose';
-export interface IUser extends mongoose.Document {
+export interface IUser {
     uid: string;
     email: string;
-    name?: string;
+    name?: string | null;
     role: 'user' | 'admin' | 'recruiter';
-    created_at: Date;
-    updated_at: Date;
+    profile_complete?: boolean;
+    created_at: string;
+    updated_at: string;
 }
-declare const User: mongoose.Model<any, {}, {}, {}, any, any>;
-export default User;
+export type PublicUser = Pick<IUser, 'uid' | 'email' | 'name' | 'role' | 'created_at'>;
+export declare const toPublicUser: (row: IUser) => PublicUser;

@@ -3,17 +3,56 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getAllResumes = exports.deleteResume = exports.getResumeById = exports.getUserResumes = exports.saveResume = exports.checkDuplicateResume = exports.getResumeDownload = exports.getResumeContent = exports.streamResumeToClient = exports.analyzeAndUpload = void 0;
+exports.addFeedback = exports.getFeedback = exports.getAllResumes = exports.deleteResume = exports.getResumeById = exports.getUserResumes = exports.saveResume = exports.checkDuplicateResume = exports.getResumeDownload = exports.getResumeContent = exports.streamResumeToClient = exports.analyzeAndUpload = void 0;
 const crypto_1 = __importDefault(require("crypto"));
 const path_1 = __importDefault(require("path"));
-const Resume_1 = __importDefault(require("../models/Resume"));
+const db_1 = require("../db");
+const Resume_1 = require("../models/Resume");
 const AWSConfig_1 = require("../../AWSConfig");
 const client_s3_1 = require("@aws-sdk/client-s3");
 const s3_request_presigner_1 = require("@aws-sdk/s3-request-presigner");
 const uuid_1 = require("uuid");
 const gemini_1 = require("../utils/gemini");
 const errors_1 = require("../utils/errors");
-const User_1 = __importDefault(require("../models/User"));
+// Ensure a users row exists (best-effort, same tolerance as before).
+const ensureUserRecord = async (uid, email) => {
+    const { data: existing, error: findError } = await db_1.supabaseAdmin
+        .from('users')
+        .select('uid')
+        .eq('uid', uid)
+        .maybeSingle();
+    if (findError) {
+        console.error('Error looking up user record:', findError);
+        return;
+    }
+    if (existing)
+        return;
+    try {
+        const { error } = await db_1.supabaseAdmin
+            .from('users')
+            .insert({ uid, email, role: 'user' });
+        if (error)
+            throw error;
+    }
+    catch (createError) {
+        console.error('Error creating user record:', createError);
+        // Continue even if user creation fails
+    }
+};
+const findResumeByIdForUser = async (id, userId) => {
+    var _a;
+    if (!(0, db_1.isUuid)(id))
+        return null;
+    const { data, error } = await db_1.supabaseAdmin
+        .from('resumes')
+        .select('*')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+    if (error)
+        throw error;
+    return (_a = data) !== null && _a !== void 0 ? _a : null;
+};
 // Full resume pipeline, server-side: hash -> duplicate check -> AI analysis
 // -> S3 upload -> signed URL -> save. Replaces the old client-side flow that
 // shipped the AWS secret key and Gemini API key to the browser.
@@ -34,11 +73,15 @@ const analyzeAndUpload = async (req, res) => {
         }
         // Generate file hash for duplicate checking
         const fileHash = crypto_1.default.createHash('sha256').update(fileBuffer).digest('hex');
-        const existingResume = await Resume_1.default.findOne({
-            user_id: userId,
-            fileHash: fileHash,
-        });
-        if (existingResume) {
+        const { data: existingResume, error: dupError } = await db_1.supabaseAdmin
+            .from('resumes')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('file_hash', fileHash)
+            .limit(1);
+        if (dupError)
+            throw dupError;
+        if (existingResume && existingResume.length > 0) {
             return res.status(409).json({ error: 'This resume has already been uploaded' });
         }
         // Analyze with Gemini (throws with a user-facing message on failure)
@@ -73,37 +116,28 @@ const analyzeAndUpload = async (req, res) => {
             Key: s3Key,
         }), { expiresIn: 3600 });
         // Ensure the user record exists
-        const user = await User_1.default.findOne({ uid: userId });
-        if (!user) {
-            try {
-                await User_1.default.create({
-                    uid: userId,
-                    email: ((_b = req.user) === null || _b === void 0 ? void 0 : _b.email) || '',
-                    role: 'user',
-                    created_at: new Date(),
-                    updated_at: new Date(),
-                });
-            }
-            catch (createError) {
-                console.error('Error creating user record:', createError);
-                // Continue even if user creation fails
-            }
-        }
-        // Save to MongoDB
-        const savedData = await Resume_1.default.create({
+        await ensureUserRecord(userId, ((_b = req.user) === null || _b === void 0 ? void 0 : _b.email) || '');
+        // Save the resume row
+        const { data: savedRow, error: saveError } = await db_1.supabaseAdmin
+            .from('resumes')
+            .insert({
             user_id: userId,
             filename: uniqueFilename,
             filelink,
-            fileHash,
+            file_hash: fileHash,
             analysis: analysisJson,
             vendor_id: vendor_id || null,
             vendor_name: vendor_name || null,
-        });
-        return res.status(201).json({ analysis: analysisJson, savedData });
+        })
+            .select('*')
+            .single();
+        if (saveError)
+            throw saveError;
+        return res.status(201).json({ analysis: analysisJson, savedData: (0, Resume_1.toResume)(savedRow) });
     }
     catch (error) {
         console.error('Error analyzing and uploading resume:', error);
-        if ((0, errors_1.errCode)(error) === 11000) {
+        if ((0, db_1.httpStatusForDbError)(error) === 409) {
             return res.status(409).json({ error: 'This resume has already been uploaded' });
         }
         return res.status(500).json({ error: 'Failed to save resume' });
@@ -147,7 +181,10 @@ const getResumeContent = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        const resume = await Resume_1.default.findOne({ _id: id, user_id: userId });
+        if (!(0, db_1.isUuid)(id)) {
+            return res.status(400).json({ error: 'Invalid id' });
+        }
+        const resume = await findResumeByIdForUser(id, userId);
         if (!resume) {
             return res.status(404).json({ error: 'Resume not found' });
         }
@@ -155,9 +192,6 @@ const getResumeContent = async (req, res) => {
     }
     catch (error) {
         console.error('Error fetching resume content:', error);
-        if ((0, errors_1.errName)(error) === 'CastError') {
-            return res.status(400).json({ error: 'Invalid id' });
-        }
         return res.status(500).json({ error: 'Failed to fetch resume content' });
     }
 };
@@ -171,7 +205,10 @@ const getResumeDownload = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        const resume = await Resume_1.default.findOne({ _id: id, user_id: userId });
+        if (!(0, db_1.isUuid)(id)) {
+            return res.status(400).json({ error: 'Invalid id' });
+        }
+        const resume = await findResumeByIdForUser(id, userId);
         if (!resume) {
             return res.status(404).json({ error: 'Resume not found' });
         }
@@ -179,9 +216,6 @@ const getResumeDownload = async (req, res) => {
     }
     catch (error) {
         console.error('Error downloading resume:', error);
-        if ((0, errors_1.errName)(error) === 'CastError') {
-            return res.status(400).json({ error: 'Invalid id' });
-        }
         return res.status(500).json({ error: 'Failed to download resume' });
     }
 };
@@ -197,11 +231,15 @@ const checkDuplicateResume = async (req, res) => {
             return res.status(400).json({ error: 'Missing required fields: userId or fileHash' });
         }
         // Check for duplicate
-        const existingResume = await Resume_1.default.findOne({
-            user_id: userIdentifier,
-            fileHash: fileHash
-        });
-        return res.status(200).json({ isDuplicate: !!existingResume });
+        const { data, error } = await db_1.supabaseAdmin
+            .from('resumes')
+            .select('id')
+            .eq('user_id', userIdentifier)
+            .eq('file_hash', fileHash)
+            .limit(1);
+        if (error)
+            throw error;
+        return res.status(200).json({ isDuplicate: !!(data && data.length > 0) });
     }
     catch (error) {
         console.error('Error checking for duplicate resume:', error);
@@ -209,7 +247,7 @@ const checkDuplicateResume = async (req, res) => {
     }
 };
 exports.checkDuplicateResume = checkDuplicateResume;
-// Save resume data to MongoDB
+// Save resume data (client-side analyzed fallback path)
 const saveResume = async (req, res) => {
     var _a, _b;
     try {
@@ -218,46 +256,43 @@ const saveResume = async (req, res) => {
         if (!userIdentifier) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        // Check if user exists in database
-        const user = await User_1.default.findOne({ uid: userIdentifier });
-        if (!user) {
-            // Create user if doesn't exist
-            try {
-                await User_1.default.create({
-                    uid: userIdentifier,
-                    email: ((_b = req.user) === null || _b === void 0 ? void 0 : _b.email) || '',
-                    role: 'user',
-                    created_at: new Date(),
-                    updated_at: new Date()
-                });
-            }
-            catch (createError) {
-                console.error('Error creating user record:', createError);
-                // Continue even if user creation fails
-            }
-        }
+        // Check if user exists in database (create if missing)
+        await ensureUserRecord(userIdentifier, ((_b = req.user) === null || _b === void 0 ? void 0 : _b.email) || '');
         // Check for duplicate resume
-        const existingResume = await Resume_1.default.findOne({
-            user_id: userIdentifier,
-            fileHash: fileHash
-        });
-        if (existingResume) {
+        const { data: existingResume, error: dupError } = await db_1.supabaseAdmin
+            .from('resumes')
+            .select('id')
+            .eq('user_id', userIdentifier)
+            .eq('file_hash', fileHash)
+            .limit(1);
+        if (dupError)
+            throw dupError;
+        if (existingResume && existingResume.length > 0) {
             return res.status(409).json({ error: 'This resume has already been uploaded' });
         }
         // Create new resume
-        const newResume = await Resume_1.default.create({
+        const { data: newResume, error: createError } = await db_1.supabaseAdmin
+            .from('resumes')
+            .insert({
             user_id: userIdentifier,
             filename,
             filelink,
-            fileHash,
-            analysis,
+            file_hash: fileHash,
+            analysis: analysis !== null && analysis !== void 0 ? analysis : null,
             vendor_id: vendor_id || null,
             vendor_name: vendor_name || null,
-        });
-        return res.status(201).json(newResume);
+        })
+            .select('*')
+            .single();
+        if (createError)
+            throw createError;
+        return res.status(201).json((0, Resume_1.toResume)(newResume));
     }
     catch (error) {
         console.error('Error saving resume:', error);
+        if ((0, db_1.httpStatusForDbError)(error) === 409) {
+            return res.status(409).json({ error: 'This resume has already been uploaded' });
+        }
         return res.status(500).json({ error: 'Failed to save resume' });
     }
 };
@@ -266,22 +301,21 @@ exports.saveResume = saveResume;
 const getUserResumes = async (req, res) => {
     var _a, _b;
     try {
-        // Debug logs to help troubleshoot
-        console.log('Request query:', req.query);
-        console.log('Request body:', req.body);
-        console.log('Request user:', req.user);
-        // Try to get userId from multiple places
+        // Try to get userId from multiple places (token first, always)
         const queryUserId = req.query.userId;
         const bodyUserId = (_a = req.body) === null || _a === void 0 ? void 0 : _a.userId;
         const userIdentifier = ((_b = req.user) === null || _b === void 0 ? void 0 : _b.uid) || queryUserId || bodyUserId;
-        console.log('Using User ID:', userIdentifier);
         if (!userIdentifier) {
-            console.log('No user identifier found in request');
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        const resumes = await Resume_1.default.find({ user_id: userIdentifier }).sort({ uploaded_at: -1 });
-        console.log('Resumes found:', resumes.length);
-        return res.status(200).json(resumes);
+        const { data: resumes, error } = await db_1.supabaseAdmin
+            .from('resumes')
+            .select('*')
+            .eq('user_id', userIdentifier)
+            .order('uploaded_at', { ascending: false });
+        if (error)
+            throw error;
+        return res.status(200).json((resumes !== null && resumes !== void 0 ? resumes : []).map((row) => (0, Resume_1.toResume)(row)));
     }
     catch (error) {
         console.error('Error fetching resumes:', error);
@@ -298,11 +332,11 @@ const getResumeById = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        const resume = await Resume_1.default.findOne({ _id: id, user_id: userId });
+        const resume = await findResumeByIdForUser(id, userId);
         if (!resume) {
             return res.status(404).json({ error: 'Resume not found' });
         }
-        return res.status(200).json(resume);
+        return res.status(200).json((0, Resume_1.toResume)(resume));
     }
     catch (error) {
         console.error('Error fetching resume:', error);
@@ -319,36 +353,45 @@ const deleteResume = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        const deletedResume = await Resume_1.default.findOneAndDelete({ _id: id, user_id: userId });
-        if (!deletedResume) {
+        const { data: deleted, error } = await db_1.supabaseAdmin
+            .from('resumes')
+            .delete()
+            .eq('id', id)
+            .eq('user_id', userId)
+            .select('id');
+        if (error)
+            throw error;
+        if (!deleted || deleted.length === 0) {
             return res.status(404).json({ error: 'Resume not found' });
         }
         return res.status(200).json({ message: 'Resume deleted successfully' });
     }
     catch (error) {
         console.error('Error deleting resume:', error);
+        if ((0, db_1.httpStatusForDbError)(error) === 400) {
+            return res.status(404).json({ error: 'Resume not found' });
+        }
         return res.status(500).json({ error: 'Failed to delete resume' });
     }
 };
 exports.deleteResume = deleteResume;
 // Add this new function to get all resumes (for admin users)
 const getAllResumes = async (req, res) => {
-    var _a;
     try {
-        // Only admin users should be allowed to access all resumes
-        console.log('Getting all resumes, user role:', (_a = req.user) === null || _a === void 0 ? void 0 : _a.role);
         if (!req.user) {
-            console.log('User not authenticated for getAllResumes');
             return res.status(401).json({ error: 'Not authenticated' });
         }
         if (req.user.role !== 'admin') {
-            console.log('User not authorized to access all resumes:', req.user.uid);
             return res.status(403).json({ error: 'Not authorized to access all resumes' });
         }
         // Get all resumes
-        const resumes = await Resume_1.default.find({}).sort({ uploaded_at: -1 });
-        console.log(`Found ${resumes.length} resumes in total`);
-        return res.status(200).json(resumes);
+        const { data: resumes, error } = await db_1.supabaseAdmin
+            .from('resumes')
+            .select('*')
+            .order('uploaded_at', { ascending: false });
+        if (error)
+            throw error;
+        return res.status(200).json((resumes !== null && resumes !== void 0 ? resumes : []).map((row) => (0, Resume_1.toResume)(row)));
     }
     catch (error) {
         console.error('Error fetching all resumes:', error);
@@ -356,3 +399,69 @@ const getAllResumes = async (req, res) => {
     }
 };
 exports.getAllResumes = getAllResumes;
+// ---------------------------------------------------------------------------
+// Company feedback (was Firestore users/{uid}/resumes/feedback)
+// ---------------------------------------------------------------------------
+// GET /resumes/feedback?filename=... — caller's own feedback for one resume
+const getFeedback = async (req, res) => {
+    var _a;
+    try {
+        const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a.uid;
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+        const filename = req.query.filename;
+        if (typeof filename !== 'string' || !filename) {
+            return res.status(400).json({ error: 'Missing required query param: filename' });
+        }
+        const { data, error } = await db_1.supabaseAdmin
+            .from('company_feedback')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('filename', filename)
+            .order('created_at', { ascending: true });
+        if (error)
+            throw error;
+        return res.status(200).json(data !== null && data !== void 0 ? data : []);
+    }
+    catch (error) {
+        console.error('Error fetching feedback:', error);
+        return res.status(500).json({ error: 'Failed to fetch feedback' });
+    }
+};
+exports.getFeedback = getFeedback;
+// POST /resumes/feedback — append one feedback entry for the caller's resume
+const addFeedback = async (req, res) => {
+    var _a;
+    try {
+        const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a.uid;
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+        const { filename, filelink, company_name, feedback } = req.body || {};
+        if (typeof filename !== 'string' || !filename.trim() ||
+            typeof company_name !== 'string' || !company_name.trim() ||
+            typeof feedback !== 'string' || !feedback.trim()) {
+            return res.status(400).json({ error: 'filename, company_name and feedback are required' });
+        }
+        const { data: row, error } = await db_1.supabaseAdmin
+            .from('company_feedback')
+            .insert({
+            user_id: userId,
+            filename: filename.trim(),
+            filelink: typeof filelink === 'string' ? filelink : null,
+            company_name: company_name.trim(),
+            feedback: feedback.trim(),
+        })
+            .select('*')
+            .single();
+        if (error)
+            throw error;
+        return res.status(201).json(row);
+    }
+    catch (error) {
+        console.error('Error adding feedback:', error);
+        return res.status(500).json({ error: 'Failed to add feedback' });
+    }
+};
+exports.addFeedback = addFeedback;

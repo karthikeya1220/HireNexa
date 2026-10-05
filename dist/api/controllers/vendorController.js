@@ -1,12 +1,29 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteVendor = exports.updateVendor = exports.createVendor = exports.getVendorById = exports.getAllVendors = void 0;
-const Vendor_1 = __importDefault(require("../models/Vendor"));
+const db_1 = require("../db");
+const Vendor_1 = require("../models/Vendor");
 const auth_helpers_1 = require("../utils/auth-helpers");
-const errors_1 = require("../utils/errors");
+// Columns the client may write on vendors (everything else is server-owned).
+const VENDOR_WRITABLE_COLUMNS = [
+    'name', 'address', 'contact_person', 'country', 'email', 'phone', 'state', 'status',
+];
+const pickVendorFields = (body) => {
+    const out = {};
+    for (const key of VENDOR_WRITABLE_COLUMNS) {
+        if (body && key in body)
+            out[key] = body[key];
+    }
+    return out;
+};
+const findVendorById = async (id) => {
+    if (!(0, db_1.isUuid)(id))
+        return null;
+    const { data, error } = await db_1.supabaseAdmin.from('vendors').select('*').eq('id', id).maybeSingle();
+    if (error)
+        throw error;
+    return data ? (0, Vendor_1.toVendor)(data) : null;
+};
 // Vendors are readable by any authenticated user (shared list), but only the
 // creator or an admin may modify/delete them.
 const assertCanModify = (req, vendor, res) => {
@@ -25,15 +42,17 @@ const getAllVendors = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        // Get query parameters — must be a plain string, otherwise query-string
-        // operators like ?status[$ne]=x would be executed by MongoDB.
+        // Get query parameters — must be a plain string.
         const rawStatus = req.query.status;
         const status = typeof rawStatus === 'string' ? rawStatus : undefined;
-        // Build query object
-        const query = status && status !== 'all' ? { status } : {};
-        // Find all vendors
-        const vendors = await Vendor_1.default.find(query).sort({ created_at: -1 });
-        res.status(200).json(vendors);
+        let query = db_1.supabaseAdmin.from('vendors').select('*');
+        if (status && status !== 'all') {
+            query = query.eq('status', status);
+        }
+        const { data: vendors, error } = await query.order('created_at', { ascending: false });
+        if (error)
+            throw error;
+        res.status(200).json((vendors !== null && vendors !== void 0 ? vendors : []).map((row) => (0, Vendor_1.toVendor)(row)));
     }
     catch (error) {
         console.error('Error fetching vendors:', error);
@@ -50,7 +69,7 @@ const getVendorById = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        const vendor = await Vendor_1.default.findById(id);
+        const vendor = await findVendorById(id);
         if (!vendor) {
             return res.status(404).json({ error: 'Vendor not found' });
         }
@@ -72,22 +91,26 @@ const createVendor = async (req, res) => {
             return res.status(401).json({ error: 'User not authenticated' });
         }
         // Add metadata to vendor data — server owns identity fields
-        const { _id, metadata, created_at, updated_at, ...bodyFields } = req.body || {};
         const vendorData = {
-            ...bodyFields,
+            ...pickVendorFields(req.body),
             metadata: {
                 created_by: userEmail,
                 created_by_id: userId,
                 last_modified_by: userEmail,
-            }
+            },
         };
-        const vendor = new Vendor_1.default(vendorData);
-        await vendor.save();
-        res.status(201).json(vendor);
+        const { data: vendor, error } = await db_1.supabaseAdmin
+            .from('vendors')
+            .insert(vendorData)
+            .select('*')
+            .single();
+        if (error)
+            throw error;
+        res.status(201).json((0, Vendor_1.toVendor)(vendor));
     }
     catch (error) {
         console.error('Error creating vendor:', error);
-        if ((0, errors_1.errCode)(error) === 11000) {
+        if ((0, db_1.httpStatusForDbError)(error) === 409) {
             return res.status(409).json({ error: 'Vendor already exists' });
         }
         res.status(500).json({ error: 'Failed to create vendor' });
@@ -96,7 +119,7 @@ const createVendor = async (req, res) => {
 exports.createVendor = createVendor;
 // Update an existing vendor
 const updateVendor = async (req, res) => {
-    var _a, _b;
+    var _a, _b, _c;
     try {
         const { id } = req.params;
         const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a.uid;
@@ -104,21 +127,33 @@ const updateVendor = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        const vendor = await Vendor_1.default.findById(id);
+        const vendor = await findVendorById(id);
         if (!vendor) {
             return res.status(404).json({ error: 'Vendor not found' });
         }
         if (!assertCanModify(req, vendor, res))
             return;
-        // Update vendor data with last modifier info — strip ownership/identity
-        // fields the client must not control
-        const { _id, metadata, created_at, updated_at, ...updateFields } = req.body || {};
+        // Update vendor data with last modifier info — ownership metadata is
+        // merged (never replaced) like the old dotted-path update
         const updatedVendorData = {
-            ...updateFields,
-            'metadata.last_modified_by': userEmail,
+            ...pickVendorFields(req.body),
+            metadata: {
+                ...((_c = vendor.metadata) !== null && _c !== void 0 ? _c : {}),
+                last_modified_by: userEmail,
+            },
         };
-        const updatedVendor = await Vendor_1.default.findByIdAndUpdate(id, updatedVendorData, { new: true, runValidators: true });
-        res.status(200).json(updatedVendor);
+        const { data: updatedVendor, error } = await db_1.supabaseAdmin
+            .from('vendors')
+            .update(updatedVendorData)
+            .eq('id', id)
+            .select('*')
+            .maybeSingle();
+        if (error)
+            throw error;
+        if (!updatedVendor) {
+            return res.status(404).json({ error: 'Vendor not found' });
+        }
+        res.status(200).json((0, Vendor_1.toVendor)(updatedVendor));
     }
     catch (error) {
         console.error('Error updating vendor:', error);
@@ -135,14 +170,16 @@ const deleteVendor = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
-        const vendor = await Vendor_1.default.findById(id);
+        const vendor = await findVendorById(id);
         if (!vendor) {
             return res.status(404).json({ error: 'Vendor not found' });
         }
         if (!assertCanModify(req, vendor, res))
             return;
         // Delete vendor
-        await Vendor_1.default.findByIdAndDelete(id);
+        const { error } = await db_1.supabaseAdmin.from('vendors').delete().eq('id', id);
+        if (error)
+            throw error;
         res.status(200).json({ message: 'Vendor deleted successfully' });
     }
     catch (error) {
