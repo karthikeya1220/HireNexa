@@ -1,109 +1,106 @@
-// Script to make a specific user an admin
+/* eslint-disable */
+// Set a user's role (default: admin) in public.users, matched by email.
+// The auth user must already exist (created by the migration script or by
+// signing in once — the API auto-provisions public.users rows on first use).
+//
+// Usage:
+//   node api/scripts/make-admin.js <email> [--role admin|user|recruiter]
+//   node api/scripts/make-admin.js --list
+
 require('dotenv').config();
-const mongoose = require('mongoose');
+const { createClient } = require('@supabase/supabase-js');
 
-// Connect to MongoDB
-const connectToMongoDB = async () => {
-  try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/test');
-    console.log('Connected to MongoDB');
-    return true;
-  } catch (error) {
-    console.error('MongoDB connection error:', error);
-    return false;
-  }
-};
+const URL = process.env.SUPABASE_URL;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (!URL || !SERVICE_KEY) {
+  console.error('FATAL: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
+  process.exit(1);
+}
 
-// Define User schema to ensure model consistency
-const UserSchema = new mongoose.Schema({
-  uid: { type: String, required: true },
-  email: { type: String, required: true },
-  name: { type: String },
-  role: { type: String, default: 'user' },
-  created_at: { type: Date, default: Date.now },
-  updated_at: { type: Date, default: Date.now },
+const supabase = createClient(URL, SERVICE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
 });
+const ROLES = new Set(['user', 'admin', 'recruiter']);
 
-// Create User model with the name 'User'
-// Using 'User' instead of 'ATSUser' to match what's used in the application
-const User = mongoose.models.User || mongoose.model('User', UserSchema);
+async function findAuthUserByEmail(email) {
+  let page = 1;
+  const perPage = 1000;
+  for (;;) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error) throw new Error(`listUsers failed: ${error.message}`);
+    const users = data?.users || [];
+    const match = users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+    if (match) return match;
+    if (users.length < perPage) return null;
+    page += 1;
+  }
+}
 
-// Function to find a user by email and make them admin
-const makeUserAdmin = async (email) => {
-  try {
-    console.log(`Looking for user with email: ${email}`);
-    
-    // First, check if the user exists in the database
-    const user = await User.findOne({ email });
-    
-    if (!user) {
-      console.log(`No user found with email: ${email}. Creating new user...`);
-      
-      // Create a new user with admin role
-      const newUser = new User({
-        uid: 'manual-admin-' + Date.now(), // Temporary UID until Firebase auth linked
-        email,
-        name: email.split('@')[0],
-        role: 'admin',
-        created_at: new Date(),
-        updated_at: new Date()
-      });
-      
-      await newUser.save();
-      console.log(`New admin user created with email: ${email}`);
-      return;
+async function main() {
+  const args = process.argv.slice(2);
+
+  if (args.includes('--list')) {
+    const { data, error } = await supabase
+      .from('users')
+      .select('uid, email, name, role, profile_complete, created_at')
+      .order('created_at', { ascending: true });
+    if (error) throw new Error(error.message);
+    console.log(`\nAll users (${data.length}):`);
+    for (const u of data) {
+      console.log(`- ${u.email} (${u.uid}), role: ${u.role}, profile_complete: ${u.profile_complete}`);
     }
-    
-    console.log(`Found user: ${user.email} (${user.uid}), current role: ${user.role}`);
-    
-    // Update to admin role
-    await User.updateOne(
-      { _id: user._id },
-      { $set: { role: 'admin', updated_at: new Date() } }
-    );
-    
-    // Verify the update was successful
-    const updatedUser = await User.findOne({ email });
-    console.log(`User ${email} role updated to: ${updatedUser.role}`);
-  } catch (error) {
-    console.error(`Error making user admin:`, error);
+    return;
   }
-};
 
-// Function to list all users
-const listAllUsers = async () => {
-  try {
-    const users = await User.find({});
-    console.log('\nAll users in database:');
-    users.forEach(user => {
-      console.log(`- ${user.email} (${user.uid}), role: ${user.role}`);
-    });
-  } catch (error) {
-    console.error('Error listing users:', error);
+  const email = args.find((a) => !a.startsWith('--'));
+  const roleArgIndex = args.indexOf('--role');
+  const role = roleArgIndex >= 0 ? args[roleArgIndex + 1] : 'admin';
+
+  if (!email || !email.includes('@')) {
+    console.error('Usage: node api/scripts/make-admin.js <email> [--role admin|user|recruiter]');
+    console.error('       node api/scripts/make-admin.js --list');
+    process.exit(1);
   }
-};
-
-// Main function
-const main = async () => {
-  // Connect to MongoDB
-  const connected = await connectToMongoDB();
-  if (!connected) {
+  if (!ROLES.has(role)) {
+    console.error(`Invalid role "${role}" — expected one of: ${[...ROLES].join(', ')}`);
     process.exit(1);
   }
 
-  // Email of the user to make admin (REPLACE WITH YOUR EMAIL)
-  const targetEmail = 'praneethdevarasetty31@gmail.com';
-  
-  // Make the user an admin
-  await makeUserAdmin(targetEmail);
-  
-  // List all users to verify
-  await listAllUsers();
+  console.log(`Looking up auth user: ${email}`);
+  const authUser = await findAuthUserByEmail(email);
+  if (!authUser) {
+    console.error(`No Supabase auth user with email ${email}.`);
+    console.error('Run the migration script or have the user sign in once, then retry.');
+    process.exit(1);
+  }
 
-  // Disconnect from MongoDB
-  await mongoose.disconnect();
-  console.log('Disconnected from MongoDB');
-};
+  const { data: existing, error: readError } = await supabase
+    .from('users')
+    .select('role')
+    .eq('uid', authUser.id)
+    .maybeSingle();
+  if (readError) throw new Error(readError.message);
 
-// Run the script
-main(); 
+  let error;
+  if (existing) {
+    ({ error } = await supabase
+      .from('users')
+      .update({ role, updated_at: new Date().toISOString() })
+      .eq('uid', authUser.id));
+  } else {
+    ({ error } = await supabase.from('users').insert({
+      uid: authUser.id,
+      email: authUser.email,
+      name: authUser.user_metadata?.name || email.split('@')[0],
+      role,
+    }));
+  }
+  if (error) throw new Error(error.message);
+
+  console.log(`User ${email} role set to: ${role} (uid: ${authUser.id})`);
+}
+
+main().catch((e) => {
+  console.error('ERROR:', e.message);
+  process.exit(1);
+});
