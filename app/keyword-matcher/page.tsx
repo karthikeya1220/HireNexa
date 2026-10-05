@@ -104,7 +104,11 @@ export default function KeywordMatcherPage() {
 
   useEffect(() => {
     const fetchResumes = async () => {
-      if (!user) return
+      if (!user) {
+        // Stop the spinner instead of returning early (see job/page.tsx).
+        setIsLoading(false)
+        return
+      }
       setIsLoading(true)
 
       try {

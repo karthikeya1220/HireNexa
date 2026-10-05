@@ -42,11 +42,11 @@ interface Profile {
   _id: string
   filename: string
   filelink: string
-  uploaded_at: string
+  uploaded_at: string | { seconds: number; nanoseconds: number }
   created_at?: string
   aiAnalysis?: string
   analysis?: Analysis
-  profile_summary?: string
+  profile_summary?: string | null
   companyFeedback?: string[]
   uploadedAt: {
     seconds: number
@@ -65,15 +65,20 @@ export default function ProfilePage() {
 
   useEffect(() => {
     const fetchProfile = async () => {
-      if (!user || !params.filename) return
+      if (!user || !params.filename) {
+        // Stop the spinner instead of returning early (see job/page.tsx).
+        setIsLoading(false)
+        return
+      }
 
       try {
         // Fetch the specific resume by ID using the API client
-        const resumeData = await apiClient.resumes.getResume(params.filename as string) as any;
+        const resumeData = await apiClient.resumes.getResume(params.filename as string) as Profile;
         
         if (resumeData) {
           // Convert timestamp or ISO string to a format compatible with ProfileHeader
-          const uploadTimestamp = resumeData.uploaded_at || resumeData.created_at || new Date().toISOString();
+          const uploadTimestamp: string | { seconds?: number } =
+            resumeData.uploaded_at || resumeData.created_at || new Date().toISOString();
           let timestampSeconds = 0;
           
           // If it's a string date, convert to timestamp
@@ -91,7 +96,7 @@ export default function ProfilePage() {
             uploaded_at: resumeData.uploaded_at || resumeData.created_at || new Date().toISOString(),
             aiAnalysis: resumeData.aiAnalysis,
             analysis: resumeData.analysis,
-            profile_summary: resumeData.analysis?.profile_summary || null,
+            profile_summary: resumeData.analysis?.profile_summary || undefined,
             companyFeedback: resumeData.companyFeedback,
             // Add uploadedAt property in the format expected by ProfileHeader
             uploadedAt: {

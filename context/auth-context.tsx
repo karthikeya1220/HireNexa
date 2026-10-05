@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useEffect, useState, useRef } from "react"
+import { createContext, useCallback, useContext, useEffect, useState, useRef } from "react"
 import { User } from "firebase/auth"
 import { auth } from "@/FirebaseConfig"
 import type { UserProfile } from "@/types/user"
@@ -35,16 +35,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
-  const [isRefreshing, setIsRefreshing] = useState(false)
   const initialLoadAttempted = useRef(false)
   const refreshTimeout = useRef<NodeJS.Timeout | null>(null)
+  // In-flight guard kept in a ref (not state) so refreshUserProfile keeps a
+  // stable identity — consumers that depend on it no longer re-run in a loop.
+  const isRefreshing = useRef(false)
 
-  // Function to refresh user profile data - prevent infinite loops with isRefreshing flag
-  const refreshUserProfile = async () => {
-    if (!user || isRefreshing) return;
+  // Function to refresh user profile data - prevent infinite refresh calls
+  const refreshUserProfile = useCallback(async () => {
+    if (!user || isRefreshing.current) return;
     
     try {
-      setIsRefreshing(true);
+      isRefreshing.current = true;
       console.log("Starting user profile refresh for:", user.uid);
       
       // First try to get the current user profile
@@ -95,9 +97,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
     } finally {
-      setIsRefreshing(false);
+      isRefreshing.current = false;
     }
-  };
+  }, [user]);
 
   // Function to create a new user record based on Firebase auth
   const createUserRecord = async (firebaseUser: User) => {

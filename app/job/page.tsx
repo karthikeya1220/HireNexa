@@ -80,7 +80,12 @@ export default function JobPage() {
 
   useEffect(() => {
     const fetchJobs = async () => {
-      if (!user) return
+      if (!user) {
+        // Stop the spinner instead of returning early — a signed-out visit
+        // would otherwise spin forever (this return used to skip the finally).
+        setIsLoading(false)
+        return
+      }
 
       try {
         setIsLoading(true)

@@ -6,13 +6,6 @@ import { doc, getDoc, updateDoc } from "firebase/firestore"
 import { db } from "@/FirebaseConfig"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { toast } from "sonner"
 import { Loader2 } from "lucide-react"
 
@@ -35,16 +28,13 @@ export default function ProfilePage() {
     role: ""
   })
 
-  const roles = [
-    { id: "recruiter", label: "Recruiter" },
-    { id: "hiring_manager", label: "Hiring Manager" },
-    { id: "hr", label: "HR" },
-    { id: "admin", label: "Admin" }
-  ]
-
   useEffect(() => {
     const fetchProfile = async () => {
-      if (!user) return
+      if (!user) {
+        // Stop the spinner instead of returning early (see job/page.tsx).
+        setIsLoading(false)
+        return
+      }
 
       try {
         const userDoc = await getDoc(doc(db, "users", user.uid))
@@ -67,8 +57,11 @@ export default function ProfilePage() {
 
     setIsSaving(true)
     try {
+      // Never write `role` from the client — roles are server-managed only.
+      const editableFields: Record<string, unknown> = { ...profile }
+      delete editableFields.role
       await updateDoc(doc(db, "users", user.uid), {
-        ...profile,
+        ...editableFields,
         updatedAt: new Date().toISOString()
       })
       toast.success("Profile updated successfully")
@@ -129,22 +122,13 @@ export default function ProfilePage() {
             <label htmlFor="role" className="text-sm font-medium">
               Role
             </label>
-            <Select
+            <Input
+              id="role"
               value={profile.role}
-              onValueChange={(value) => setProfile({ ...profile, role: value })}
-              disabled={!isEditing}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {roles.map((role) => (
-                  <SelectItem key={role.id} value={role.id}>
-                    {role.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              disabled
+              className="bg-muted capitalize"
+              title="Roles are managed by an administrator"
+            />
           </div>
 
           <div className="flex justify-end gap-4">
