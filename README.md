@@ -5,7 +5,7 @@
 ![HireNexa Logo](https://img.shields.io/badge/HireNexa-ATS-6366f1?style=for-the-badge)
 [![Next.js](https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
-[![MongoDB](https://img.shields.io/badge/MongoDB-8.3-green?style=for-the-badge&logo=mongodb)](https://www.mongodb.com/)
+[![Supabase](https://img.shields.io/badge/Supabase-Postgres-3fcf8e?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
 **A modern, AI-powered Application Tracking System for streamlined recruitment**
@@ -82,7 +82,7 @@ HireNexa addresses these challenges by providing:
 ### 🔐 Role-Based Access Control
 - **Admin Dashboard**: Full system access for administrators
 - **User Roles**: Separate permissions for recruiters, hiring managers, and viewers
-- **Secure Authentication**: Firebase-based authentication with email/password
+- **Secure Authentication**: Passwordless email magic-link sign-in (Supabase Auth)
 - **User Management**: Admin interface for managing user accounts and permissions
 
 ### 📊 Analytics & Reporting
@@ -122,10 +122,8 @@ HireNexa addresses these challenges by providing:
 |------------|---------|---------|
 | **Express.js** | Node.js web framework | 4.19.2 |
 | **TypeScript** | Type-safe JavaScript | 5.x |
-| **MongoDB** | NoSQL database | 8.3.1 |
-| **Mongoose** | MongoDB ODM | 8.3.1 |
-| **Firebase Admin** | Authentication | 12.0.0 |
-| **JWT** | Token-based auth | 9.0.2 |
+| **Supabase (PostgREST)** | PostgreSQL database via service-role client | 2.x |
+| **jose** | JWT verification (Supabase access tokens) | 6.x |
 | **Helmet** | Security middleware | 8.1.0 |
 | **CORS** | Cross-origin requests | 2.8.5 |
 | **Express Rate Limit** | API rate limiting | 7.5.0 |
@@ -134,9 +132,9 @@ HireNexa addresses these challenges by providing:
 | Service | Purpose |
 |---------|---------|
 | **Google Gemini AI** | Resume analysis and NLP |
-| **Firebase Authentication** | User authentication |
+| **Supabase Auth** | Passwordless email magic-link authentication |
+| **Supabase Postgres** | Primary database (RLS, deny-by-default) |
 | **AWS S3** | Resume file storage |
-| **MongoDB Atlas** | Cloud database (production) |
 
 ### Development Tools
 | Tool | Purpose |
@@ -167,58 +165,58 @@ HireNexa follows a modern **three-tier architecture** with clear separation of c
 
 #### 2. **Application Layer (Backend API)**
 - **Express.js** REST API with TypeScript
-- **JWT-based authentication** with Firebase Admin SDK
+- **JWT-based authentication**: Supabase access tokens verified with `jose` (HS256, `aud: authenticated`)
 - **Middleware stack**: CORS, Helmet (security), Rate Limiting
-- **MVC pattern**: Organized into routes, controllers, and models
-- **Error handling**: Centralized error handling and logging
+- **MVC pattern**: Organized into routes, controllers, and mappers
+- **Error handling**: Centralized error handling with Postgres error-code mapping
 
 #### 3. **Data Layer**
-- **MongoDB** with Mongoose ODM for flexible, schema-based data modeling
+- **Supabase Postgres** accessed through the service-role client (PostgREST); RLS is deny-by-default so the browser can never query tables directly
 - **AWS S3** for scalable file storage (resumes, documents)
 - **Google Gemini AI** for intelligent resume parsing and analysis
 
 ### Data Flow
 
 ```
-User → Next.js Frontend → Firebase Auth → Express API → MongoDB/S3/Gemini AI
-                                                    ↓
-                                            Response with Data
+User → Next.js Frontend → Supabase Auth (magic link) → Express API → Postgres/S3/Gemini AI
+                                                               ↓
+                                                        Response with Data
 ```
 
 1. **Authentication Flow**:
-   - User signs in via Firebase Authentication
-   - Frontend receives Firebase ID token
-   - Token sent with API requests
-   - Backend verifies token with Firebase Admin SDK
-   - User data retrieved from MongoDB
+   - User requests a magic link; Supabase emails a one-time sign-in link
+   - Frontend receives a Supabase session (access token) and stores it
+   - Token sent with API requests as a Bearer token
+   - Backend verifies the token with `jose` and auto-provisions the `users` row on first use
+   - Role/admin checks read fresh role data from Postgres
 
 2. **Resume Upload Flow**:
    - User uploads resume via drag-and-drop
-   - File uploaded to AWS S3
-   - S3 URL stored in MongoDB
-   - Resume sent to Gemini AI for analysis
-   - Extracted data (skills, experience) stored in MongoDB
-   - Results displayed to user
+   - File hashed for duplicate detection, sent to Gemini AI for analysis
+   - File uploaded to AWS S3 (1-hour signed URL)
+   - Analysis stored in `resumes` table
 
 3. **Candidate Management Flow**:
    - CRUD operations via REST API
    - Optimistic UI updates for instant feedback
    - Real-time validation with React Hook Form
-   - MongoDB transactions for data consistency
+   - Postgres constraints + unique indexes for data consistency
 
 ### Database Schema
 
-**Collections**:
-- `users`: User accounts and profiles
-- `resumes`: Resume metadata and analysis results
-- `jobs`: Job postings and requirements
-- `vendors`: Recruitment vendor information
-- `applications`: Candidate applications (planned)
+**Tables** (see `supabase/schema.sql`):
+- `users`: accounts and roles (`user` / `admin` / `recruiter`)
+- `resumes`: resume metadata, file hash, AI analysis
+- `jobs`: job postings, requirements, metadata
+- `job_candidates`: candidates per job (Kanban pipeline)
+- `vendors`: recruitment vendor information
+- `company_feedback`: feedback left on a user's resume
 
 ### Security Features
 
-- **Authentication**: Firebase Authentication with JWT tokens
-- **Authorization**: Role-based access control (RBAC)
+- **Authentication**: Supabase Auth passwordless magic links; server verifies JWTs
+- **Authorization**: Role-based access control (RBAC) + row-level ownership checks
+- **Row Level Security**: deny-by-default RLS — no client-side PostgREST access at all
 - **Data Validation**: Input validation on both client and server
 - **Rate Limiting**: API rate limiting to prevent abuse
 - **Helmet.js**: Security headers (XSS, CSP, etc.)
@@ -254,11 +252,10 @@ User → Next.js Frontend → Firebase Auth → Express API → MongoDB/S3/Gemin
 Before you begin, ensure you have the following installed:
 - **Node.js** 18.x or higher ([Download](https://nodejs.org/))
 - **npm** or **yarn** package manager
-- **MongoDB** (local or [MongoDB Atlas](https://www.mongodb.com/cloud/atlas))
 - **Git** for version control
 
 You'll also need accounts for:
-- [Firebase](https://console.firebase.google.com/) (Authentication)
+- [Supabase](https://supabase.com/) (database + authentication)
 - [AWS](https://aws.amazon.com/) (S3 bucket)
 - [Google AI Studio](https://makersuite.google.com/) (Gemini API key)
 
@@ -283,28 +280,23 @@ You'll also need accounts for:
    ```
 
    Update `.env` with your credentials:
-   ```env
-   # MongoDB
-   MONGODB_URI=mongodb://localhost:27017/hirenexa
-   # or for MongoDB Atlas:
-   # MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/hirenexa
-
-   # Firebase Admin SDK
-   FIREBASE_PROJECT_ID=your-project-id
-   FIREBASE_PRIVATE_KEY="your-private-key"
-   FIREBASE_CLIENT_EMAIL=your-client-email
+   ```bash
+   # Supabase (backend) — Project Settings > API
+   SUPABASE_URL=https://your-project-ref.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+   SUPABASE_JWT_SECRET=your_supabase_jwt_secret
 
    # AWS S3
    AWS_ACCESS_KEY_ID=your-access-key
    AWS_SECRET_ACCESS_KEY=your-secret-key
    AWS_REGION=us-east-1
-   AWS_S3_BUCKET_NAME=your-bucket-name
+   S3_BUCKET_NAME=your-bucket-name
 
    # Google Gemini AI
    GEMINI_API_KEY=your-gemini-api-key
 
    # Server
-   PORT=5000
+   PORT=5001
    NODE_ENV=development
    ```
 
@@ -314,24 +306,25 @@ You'll also need accounts for:
    ```
 
    Update `.env.local`:
-   ```env
-   # Firebase Client SDK
-   NEXT_PUBLIC_FIREBASE_API_KEY=your-api-key
-   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-auth-domain
-   NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-project-id
-   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-storage-bucket
-   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your-sender-id
-   NEXT_PUBLIC_FIREBASE_APP_ID=your-app-id
+   ```bash
+   # Supabase (frontend) — safe to expose; magic-link auth only
+   NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 
    # API URL
-   NEXT_PUBLIC_API_URL=http://localhost:5000
+   NEXT_PUBLIC_API_URL=http://localhost:5001/api
    ```
 
-4. **Set up Firebase**
-   - Create a new project at [Firebase Console](https://console.firebase.google.com/)
-   - Enable **Email/Password** authentication
-   - Download the service account key (Settings → Service Accounts → Generate New Private Key)
-   - Place the JSON file in `misc/` directory and update the path in your code
+4. **Set up Supabase**
+   - Create a project at [supabase.com](https://supabase.com/)
+   - Open the **SQL Editor** and run the contents of `supabase/schema.sql`
+     (creates tables, indexes, triggers, and deny-by-default RLS)
+   - Copy the URL, service-role key, and JWT secret into `.env`
+   - Under **Authentication → URL Configuration**, set the Site URL and add
+     `{origin}/login` (e.g. `http://localhost:3000/login`) to Redirect URLs so
+     magic links work in development
+   - Migration from the old Firebase/MongoDB backend? See
+     [`DATA-MIGRATION.md`](./DATA-MIGRATION.md)
 
 5. **Set up AWS S3**
    - Create an S3 bucket in your AWS account
@@ -353,14 +346,15 @@ You'll also need accounts for:
    # Run both frontend and backend
    npm run dev
 
-   # Or run separately:
-   npm run dev:frontend  # Frontend on http://localhost:3000
-   npm run dev:server    # Backend on http://localhost:5000
+    # Or run separately:
+    npm run dev:frontend  # Frontend on http://localhost:3000
+    npm run dev:server    # Backend on http://localhost:5001
    ```
 
 7. **Access the application**
    - Open your browser and navigate to `http://localhost:3000`
-   - Create an admin account (first user is automatically admin)
+   - Sign in with your email (a magic link is sent to your inbox)
+   - Grant yourself admin with `node api/scripts/make-admin.js <email>`
    - Start exploring HireNexa!
 
 ### Building for Production
@@ -442,28 +436,29 @@ npm start
 
 3. Set environment variables:
    ```bash
-   heroku config:set MONGODB_URI=your-mongodb-uri
+   heroku config:set SUPABASE_URL=your-supabase-url
+   heroku config:set SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   heroku config:set SUPABASE_JWT_SECRET=your-jwt-secret
    heroku config:set GEMINI_API_KEY=your-api-key
    # ... add all other variables
    ```
 
-### Database Deployment (MongoDB Atlas)
+### Database Deployment (Supabase)
 
-1. Create a free cluster at [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
-2. Create a database user
-3. Whitelist your IP (or use 0.0.0.0/0 for all IPs)
-4. Get your connection string
-5. Update `MONGODB_URI` in your environment variables
+1. Create a project at [supabase.com](https://supabase.com/)
+2. Run `supabase/schema.sql` in the SQL Editor
+3. Under Authentication → URL Configuration, set Site URL and add your
+   production `/login` redirect URL
+4. Copy the URL, service-role key, and JWT secret into your host's env vars
 
 ### Environment Variables Checklist
 
 Make sure all these are set in your production environment:
-- ✅ `MONGODB_URI`
-- ✅ `FIREBASE_PROJECT_ID`, `FIREBASE_PRIVATE_KEY`, `FIREBASE_CLIENT_EMAIL`
-- ✅ `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_S3_BUCKET_NAME`
+- ✅ `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`
+- ✅ `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- ✅ `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET_NAME`
 - ✅ `GEMINI_API_KEY`
 - ✅ `NEXT_PUBLIC_API_URL` (your backend URL)
-- ✅ All `NEXT_PUBLIC_FIREBASE_*` variables
 
 ---
 
@@ -506,8 +501,7 @@ Distributed under the MIT License. See `LICENSE` file for more information.
 
 - [Next.js](https://nextjs.org/) - The React Framework
 - [Shadcn/UI](https://ui.shadcn.com/) - Beautiful UI Components
-- [Firebase](https://firebase.google.com/) - Authentication Platform
-- [MongoDB](https://www.mongodb.com/) - Database
+- [Supabase](https://supabase.com/) - Database & Authentication
 - [Google Gemini](https://deepmind.google/technologies/gemini/) - AI Platform
 - [AWS](https://aws.amazon.com/) - Cloud Services
 

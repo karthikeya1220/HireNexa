@@ -1,196 +1,112 @@
-# Firebase to MongoDB Data Migration Guide
+# MongoDB / Firestore → Supabase Migration Guide
 
-This guide will help you migrate your data from Firebase Firestore to MongoDB.
+This guide migrates an existing HireNexa deployment (old stack: Firebase Auth +
+Firestore for profiles/feedback, MongoDB for everything else) to the current
+Supabase stack. Existing accounts are preserved: each Firebase auth UID is
+remapped to a new Supabase auth UUID **by email**, and every reference in the
+data follows.
+
+## What the script does
+
+`api/scripts/migrate-to-supabase.js` (one-shot, idempotent-ish):
+
+1. Reads Mongo collections `users`, `jobs`, `jobcandidates`, `resumes`, `vendors`.
+2. Optionally reads Firestore `users/{uid}` docs (name/role/profileComplete) and
+   `users/{uid}/resumes/feedback` (company feedback), if `firebase-admin`
+   credentials are available.
+3. Ensures a Supabase auth user exists per email — created **without a
+   password**, so people keep using magic-link sign-in. Builds a
+   `firebaseUid → supabaseUuid` map.
+4. Inserts `public.users`, `jobs`, `job_candidates`, `resumes`, `vendors`,
+   remapping every uid reference (`jobs.metadata.created_by_id`,
+   `jobs.assigned_recruiters[]`, `resumes.user_id`,
+   `job_candidates.user_id`, `vendors.metadata.created_by_id`).
+5. Copies each S3 object from `resumes/<legacyUid>/<filename>` to
+   `resumes/<supabaseUuid>/<filename>` — the API derives the S3 key from the
+   current `user_id`, so old files must move or owners lose access.
+6. Imports company feedback into `company_feedback` and sets
+   `users.profile_complete` from Firestore.
+
+### Things to know
+
+- **New ids**: Mongo `_id`s are 24-hex; Postgres uses uuids, so jobs, resumes,
+  candidates and vendors get new ids. Any bookmarked job URLs change once.
+- **S3 copy**: needs the same AWS credentials the server uses. Objects are
+  copied (not moved); delete the old prefixes yourself after verifying.
+- **Re-runs**: mostly safe — existing users/jobs are skipped, duplicate
+  resumes (same user + hash) are skipped, candidates upsert by
+  `(job_id, filename)`.
+- **Unmapped references**: a reference to a uid with no email resolves to
+  nothing — the raw uid is kept and a warning is printed.
 
 ## Prerequisites
 
-1. MongoDB server running (local or Atlas)
-2. Firebase Admin SDK credentials
-3. Node.js and npm
-
-## Migration Steps
-
-1. **Export Data from Firebase**
-
-First, install the Firebase CLI:
+1. A Supabase project with `supabase/schema.sql` already run in the SQL Editor.
+2. Node.js and npm, and `npm install` completed in the repo.
+3. Env vars for the old sources **and** the new target:
 
 ```bash
-npm install -g firebase-tools
+# Required (server .env already has these after setup)
+MONGODB_URI=mongodb+srv://user:pass@cluster/hirenexa   # OLD database
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+
+# S3 copy (recommended — without these, resume files stay under old keys)
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+S3_BUCKET_NAME=...
+
+# Optional — Firestore profiles + company feedback
+FIREBASE_PROJECT_ID=...
+FIREBASE_PRIVATE_KEY="..."   # \n newlines escaped
+FIREBASE_CLIENT_EMAIL=...@...gserviceaccount.com
 ```
 
-Login to Firebase:
+The old Firebase service-account JSON in `misc/` works too if you point
+`firebase-admin` at it via `GOOGLE_APPLICATION_CREDENTIALS`.
 
-```bash
-firebase login
-```
+## Steps
 
-Export your Firestore data:
+1. **Dry run first** — prints the full plan (counts, warnings) without writing:
 
-```bash
-firebase firestore:export ./firestore-export
-```
+   ```bash
+   node api/scripts/migrate-to-supabase.js --dry-run
+   ```
 
-2. **Prepare for Import**
+2. **Review the output**: account counts, uid mappings, warnings about
+   unresolved references or invalid enum values.
 
-Create a migration script:
+3. **Run for real**:
 
-```javascript
-// migrate-data.js
-const admin = require('firebase-admin');
-const mongoose = require('mongoose');
-const dotenv = require('dotenv');
-const fs = require('fs');
-const path = require('path');
+   ```bash
+   node api/scripts/migrate-to-supabase.js
+   ```
 
-// Load environment variables
-dotenv.config();
+   Useful flags:
+   - `--skip-s3` — skip copying S3 objects (files stay under legacy prefixes)
+   - `--skip-firestore` — skip Firestore profiles/feedback
+   - `--dry-run` — no writes at all
 
-// Initialize Firebase Admin
-const serviceAccount = require('../misc/ats-checker-ba0fd-firebase-adminsdk-fbsvc-1984828f57.json');
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
+4. **Verify**:
+   ```bash
+   node api/scripts/make-admin.js --list     # users + roles
+   node api/scripts/make-admin.js you@example.com   # grant yourself admin
+   ```
+   Then sign in with the magic link and check jobs/resumes/vendors load.
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
+5. **Cutover**: deploy the app with the Supabase env vars. Old Mongo/Firestore
+   can be left in place (read-only) until you're confident.
 
-// Import your Mongoose models
-const User = require('./api/models/User');
-const Resume = require('./api/models/Resume');
-const Vendor = require('./api/models/Vendor');
+## Post-migration checklist
 
-// Example migration function for users
-async function migrateUsers() {
-  // Get all users from Firestore
-  const usersSnapshot = await admin.firestore().collection('users').get();
-  
-  for (const doc of usersSnapshot.docs) {
-    const userData = doc.data();
-    
-    // Create user in MongoDB
-    await User.findOneAndUpdate(
-      { uid: doc.id },
-      {
-        uid: doc.id,
-        email: userData.email,
-        name: userData.name || '',
-        role: userData.role || 'user',
-        created_at: userData.created_at ? new Date(userData.created_at) : new Date(),
-        updated_at: new Date()
-      },
-      { upsert: true, new: true }
-    );
-    
-    console.log(`Migrated user: ${doc.id}`);
-  }
-}
-
-// Example migration function for resumes
-async function migrateResumes() {
-  // Get all users
-  const usersSnapshot = await admin.firestore().collection('users').get();
-  
-  for (const userDoc of usersSnapshot.docs) {
-    const userId = userDoc.id;
-    
-    // Get resumes for this user
-    const resumesDoc = await admin.firestore()
-      .collection('users')
-      .doc(userId)
-      .collection('resumes')
-      .doc('data')
-      .get();
-    
-    if (resumesDoc.exists) {
-      const resumesData = resumesDoc.data();
-      
-      if (resumesData.resumes && Array.isArray(resumesData.resumes)) {
-        for (const resume of resumesData.resumes) {
-          // Create resume in MongoDB
-          await Resume.findOneAndUpdate(
-            { 
-              user_id: userId,
-              fileHash: resume.fileHash
-            },
-            {
-              user_id: userId,
-              filename: resume.filename,
-              filelink: resume.filelink,
-              fileHash: resume.fileHash,
-              analysis: resume.analysis,
-              vendor_id: resume.vendor_id || null,
-              vendor_name: resume.vendor_name || null,
-              uploaded_at: resume.uploadedAt ? new Date(resume.uploadedAt) : new Date(),
-              updated_at: new Date()
-            },
-            { upsert: true, new: true }
-          );
-          
-          console.log(`Migrated resume: ${resume.filename} for user: ${userId}`);
-        }
-      }
-    }
-  }
-}
-
-// Example migration function for vendors
-async function migrateVendors() {
-  // Get all vendors
-  const vendorsSnapshot = await admin.firestore().collection('vendors').get();
-  
-  for (const vendorDoc of vendorsSnapshot.docs) {
-    const vendorId = vendorDoc.id;
-    
-    // Get vendor details
-    const infoDoc = await admin.firestore()
-      .collection('vendors')
-      .doc(vendorId)
-      .collection('details')
-      .doc('info')
-      .get();
-    
-    if (infoDoc.exists) {
-      const vendorData = infoDoc.data();
-      
-      // Create vendor in MongoDB
-      await Vendor.findOneAndUpdate(
-        { _id: vendorId },
-        {
-          name: vendorData.name || 'Unknown Vendor',
-          address: vendorData.address || '',
-          contact_person: vendorData.contact_person || '',
-          country: vendorData.country || '',
-          email: vendorData.email || '',
-          phone: vendorData.phone || '',
-          state: vendorData.state || '',
-          status: vendorData.status || 'active',
-          created_at: vendorData.created_at ? new Date(vendorData.created_at) : new Date(),
-          updated_at: new Date()
-        },
-        { upsert: true, new: true }
-      );
-      
-      console.log(`Migrated vendor: ${vendorId}`);
-    }
-  }
-}
-
-// Run all migrations
-async function runMigrations() {
-  try {
-    await migrateUsers();
-    await migrateVendors();
-    await migrateResumes();
-    console.log('Migration completed successfully!');
-  } catch (error) {
-    console.error('Migration failed:', error);
-  } finally {
-    // Disconnect from MongoDB
-    await mongoose.disconnect();
-    process.exit(0);
-  }
-}
-
-runMigrations(); 
+- [ ] `supabase/schema.sql` applied
+- [ ] Supabase **Authentication → URL Configuration**: Site URL + `{origin}/login`
+      redirect URL added (dev and production)
+- [ ] Migration script run (dry-run reviewed first)
+- [ ] S3 objects copied to new prefixes (or consciously skipped)
+- [ ] Admin roles granted via `make-admin.js`
+- [ ] Magic-link sign-in works for a migrated account
+- [ ] Rotate the previously leaked AWS keys and purge old secrets from git
+      history (`git filter-repo`) — the repo is public
+- [ ] Old `MONGODB_URI` / `FIREBASE_*` vars removed from every deployment

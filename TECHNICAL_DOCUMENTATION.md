@@ -73,25 +73,23 @@
 - **No Context Providers**: Direct store access without wrapping components
 - **DevTools**: Built-in Redux DevTools integration
 
-### Backend: Express.js + MongoDB + TypeScript
+### Backend: Express.js + Supabase Postgres + TypeScript
 
 **Express.js**
 - **Mature Ecosystem**: Battle-tested with extensive middleware support
 - **Flexibility**: Unopinionated, allows custom architecture
 - **Performance**: Lightweight and fast for REST APIs
-- **Easy Integration**: Works seamlessly with TypeScript and MongoDB
+- **Easy Integration**: Works seamlessly with TypeScript and Supabase's PostgREST client
 
-**MongoDB + Mongoose**
-- **Schema Flexibility**: Resume data structure varies significantly between candidates
-- **Nested Documents**: Store complex resume analysis (education, experience, skills) without joins
-- **Scalability**: Horizontal scaling with sharding for future growth
-- **JSON-Native**: Perfect match for JavaScript/TypeScript ecosystem
-- **Fast Queries**: Indexed queries on user_id, fileHash for quick lookups
+**Supabase (PostgreSQL)**
+- **Relational Integrity**: Foreign keys and unique constraints (e.g. dedupe on `user_id + file_hash`)
+- **JSONB**: Resume analysis stays schemaless inside `jsonb` columns — same flexibility as a document store, with SQL indexes on top
+- **RLS**: Deny-by-default row-level security; only the service-role client (Express API) touches data
+- **Managed**: Auth, backups, scaling handled by Supabase
 
-**Why Not PostgreSQL?**
-- Resume analysis data is highly unstructured and varies per candidate
-- No need for complex joins or transactions in this use case
-- MongoDB's document model maps naturally to JSON resume data
+**Why not MongoDB anymore?**
+- Auth and data in one platform (Supabase Auth + Postgres) removes the Firebase/Mongo dual-source-of-truth problem
+- `jsonb` covers unstructured resume analysis without sacrificing constraints or transactions
 
 ### AI & Cloud Services
 
@@ -101,11 +99,11 @@
 - **Context Window**: Large context window handles lengthy resumes
 - **Structured Output**: Reliable JSON response generation
 
-**Firebase Authentication**
-- **Quick Setup**: Authentication in minutes, not days
-- **Security**: Industry-standard JWT tokens, secure by default
-- **Social Logins**: Easy to add Google/GitHub login later
-- **Admin SDK**: Backend token verification without additional services
+**Supabase Auth (Passwordless)**
+- **Magic Links**: Email one-time sign-in links — no passwords to leak or reset
+- **Standards-based**: Issues standard JWTs the Express API verifies with `jose`
+- **Admin API**: Server-side user provisioning (used by the migration script)
+- **Free Tier**: Generous limits for small teams
 
 **AWS S3 (File Storage)**
 - **Scalability**: Unlimited storage, pay-as-you-grow
@@ -127,32 +125,32 @@
 └─────────────────┬───────────────────────────────────────────┘
                   │
                   │ HTTPS/REST API
-                  │ Firebase ID Token (JWT)
+                  │ Supabase access token (JWT, Bearer)
                   │
 ┌─────────────────▼───────────────────────────────────────────┐
 │              BACKEND API (Express.js)                       │
 │  ┌──────────────────────────────────────────────────────┐  │
 │  │  Middleware Layer                                     │  │
 │  │  • CORS • Helmet (Security) • Rate Limiting           │  │
-│  │  • Firebase Auth Verification • RBAC                  │  │
+│  │  • JWT verification (jose) • RBAC (fresh DB role)     │  │
 │  └──────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │  Routes → Controllers → Models                        │  │
+│  │  Routes → Controllers → Row Mappers                   │  │
 │  │  /auth  /resumes  /jobs  /vendors                     │  │
 │  └──────────────────────────────────────────────────────┘  │
 └─────────────────┬───────────────────────────────────────────┘
                   │
         ┌─────────┼─────────┬─────────────┐
         │         │         │             │
-┌───────▼──┐ ┌───▼────┐ ┌──▼──────┐ ┌───▼─────────┐
-│ MongoDB  │ │ AWS S3 │ │ Firebase│ │ Gemini AI   │
-│ Atlas    │ │ Bucket │ │  Auth   │ │  API        │
-│          │ │        │ │         │ │             │
-│ Users    │ │ Resume │ │ Token   │ │ Resume      │
-│ Resumes  │ │ Files  │ │ Verify  │ │ Analysis    │
-│ Jobs     │ │ (PDFs) │ │         │ │             │
-│ Vendors  │ │        │ │         │ │             │
-└──────────┘ └────────┘ └─────────┘ └─────────────┘
+┌───────▼──┐ ┌───▼────┐ ┌──▼──────────┐ ┌──▼───────────┐
+│ Supabase │ │ AWS S3 │ │  Supabase   │ │ Gemini AI    │
+│ Postgres │ │ Bucket │ │  Auth       │ │ API          │
+│          │ │        │ │             │ │              │
+│ Users    │ │ Resume │ │ Magic-link  │ │ Resume       │
+│ Resumes  │ │ Files  │ │ JWT issue   │ │ Analysis     │
+│ Jobs     │ │ (PDFs) │ │             │ │              │
+│ Vendors  │ │        │ │             │ │              │
+└──────────┘ └────────┘ └─────────────┘ └──────────────┘
 ```
 
 ### Component Architecture
@@ -167,37 +165,39 @@
 **Application Layer (Backend API)**
 - **Routes**: Define API endpoints (`/api/routes`)
 - **Controllers**: Business logic and request handling (`/api/controllers`)
-- **Middleware**: Authentication, authorization, validation (`/api/middleware`)
-- **Models**: Mongoose schemas and database models (`/api/models`)
+- **Middleware**: Authentication, authorization, validation (`/api/middlewares`)
+- **Models**: TypeScript row types + row↔API mappers (`/api/models`)
 - **Utils**: Helper functions, AI integration (`/api/utils`)
+- **DB client**: Shared Supabase service-role client + Postgres error mapping (`/api/db.ts`)
 
 **Data Layer**
-- **MongoDB Collections**: users, resumes, jobs, vendors, applications
+- **Supabase Postgres Tables**: users, resumes, jobs, job_candidates, vendors, company_feedback (schema in `/supabase/schema.sql`)
 - **AWS S3 Buckets**: Resume file storage with folder structure
-- **Firebase**: User authentication and token management
+- **Supabase Auth**: Passwordless magic-link authentication (JWTs verified by the API)
 
 ### Database Schema Design
 
-**Users Collection**
+**users table**
 ```typescript
 {
-  uid: string (Firebase UID, indexed)
+  uid: string (Supabase auth UUID, primary key)
   email: string (unique)
-  name: string
+  name?: string
   role: 'user' | 'admin' | 'recruiter'
-  created_at: Date
-  updated_at: Date
+  profile_complete: boolean
+  created_at / updated_at: timestamptz
 }
 ```
 
-**Resumes Collection**
+**resumes table**
 ```typescript
 {
-  user_id: string (indexed)
+  id: uuid (primary key)
+  user_id: string (FK → users.uid)
   filename: string
-  filelink: string (S3 presigned URL)
-  fileHash: string (SHA-256, indexed for duplicate detection)
-  analysis: {
+  filelink: string (S3 presigned URL, refreshed per request)
+  file_hash: string (SHA-256; unique per user for duplicate detection)
+  analysis: jsonb {
     name: string
     email: string
     phone_number: string
@@ -208,25 +208,25 @@
   }
   vendor_id?: string
   vendor_name?: string
-  uploaded_at: Date
-  updated_at: Date
+  uploaded_at / updated_at: timestamptz
 }
 ```
 
-**Jobs Collection**
+**jobs table**
 ```typescript
 {
-  title: string
-  description: string
-  requirements: string[]
-  location: string
-  type: 'full-time' | 'part-time' | 'contract'
-  status: 'open' | 'closed'
-  created_by: string (user_id)
-  created_at: Date
-  updated_at: Date
+  id: uuid (primary key)
+  title, company, location, description, employment_type, ...
+  status: 'active' | 'inactive'
+  requirements / benefits / skills_required: text[]
+  metadata: jsonb { created_by, created_by_id, last_modified_by }
+  assigned_recruiters: uuid[] (user uids)
+  candidates: jsonb (legacy embedded candidates)
+  created_at / updated_at: timestamptz
 }
 ```
+
+**job_candidates table** — Kanban cards: `job_id` (FK, `on delete cascade`), `filename`, `name`, `email`, `match_analysis` (jsonb), `tracking` (jsonb), `user_id` / `user_email`, unique on `(job_id, filename)`.
 
 ---
 
@@ -234,90 +234,89 @@
 
 ### Authentication Flow (Step-by-Step)
 
-**1. User Registration/Login (Frontend)**
+**1. User Sign-In (Frontend)**
 ```
-User enters credentials → Firebase Auth SDK → Firebase creates user
-→ Returns Firebase ID Token (JWT) → Store in localStorage/memory
+User enters email → supabase.auth.signInWithOtp({ email })
+→ Supabase emails a one-time magic link (redirect to /login)
+→ Opening the link stores a session (access token + refresh token)
 ```
 
 **2. API Request Authentication**
 ```
-Frontend Request → Add Authorization: Bearer <token> header
+Frontend Request → Add Authorization: Bearer <access token> header
 → Express API receives request → Auth Middleware intercepts
 ```
 
 **3. Token Verification (Backend Middleware)**
-```javascript
-// api/middleware/auth.js
+```typescript
+// api/middlewares/authMiddleware.ts
 1. Extract token from Authorization header
-2. Verify token using Firebase Admin SDK
-   admin.auth().verifyIdToken(token)
-3. Decode token to get user UID
-4. Query MongoDB for user record by UID
-5. Attach user object to req.user
+2. Verify with jose: jwtVerify(token, SUPABASE_JWT_SECRET, { audience: 'authenticated' })
+   (signature + expiry + audience — stateless, no issuer check)
+3. Extract uid + email claims
+4. Look up public.users by uid; auto-provision on first request
+   (unique-violation race → re-fetch)
+5. Attach { uid, email, role? } to req.user
 6. Call next() to proceed to route handler
 ```
 
 **4. Role-Based Access Control (RBAC)**
-```javascript
+```typescript
 // After authentication middleware
-requireAdmin middleware:
-  - Check if req.user.role === 'admin'
-  - Return 403 Forbidden if not admin
-  
-requireRecruiter middleware:
-  - Check if req.user.role === 'recruiter' || 'admin'
-  - Return 403 Forbidden if not authorized
+isAdmin middleware:
+  - Re-reads the caller's role from public.users (fresh, not token-cached)
+  - Return 403 Forbidden if role !== 'admin'
+
+// Ownership: controllers additionally scope queries by uid
+// (e.g. getAllJobs only returns jobs the user created or is assigned to)
 ```
 
 ### Security Measures
 
 **Token Security**
-- Firebase ID tokens expire after 1 hour
-- Tokens are verified on every request (stateless)
+- Supabase access tokens expire (~1 hour); the browser silently refreshes them
+- Tokens are verified on every request (stateless HS256 via `jose`)
 - No token storage in cookies (prevents CSRF)
 
 **API Security**
 - **Helmet.js**: Sets security headers (XSS, CSP, etc.)
 - **CORS**: Whitelist allowed origins
 - **Rate Limiting**: 1000 requests per 15 minutes per IP
-- **Input Validation**: Validate all user inputs
+- **Input Validation**: Whitelisted column writes + enum checks; Postgres constraints as backstop
 
 **Database Security**
-- User data scoped by UID (users can only access their own data)
+- Row Level Security is deny-by-default — the browser has **no** PostgREST access; only the Express API's service-role client reads/writes
+- Data scoped by uid in every controller query
 - Admin-only routes protected with requireAdmin middleware
-- MongoDB connection string in environment variables
+- Service-role key + JWT secret live only in server env vars
 
 ### Authentication Code Flow
 
 **Frontend (Login)**
 ```typescript
-// User clicks login
-signInWithEmailAndPassword(auth, email, password)
-  .then(userCredential => {
-    const token = await userCredential.user.getIdToken();
-    // Store token for API requests
-    localStorage.setItem('authToken', token);
-  });
+// app/login/page.tsx
+await supabase.auth.signInWithOtp({
+  email,
+  options: { emailRedirectTo: `${origin}/login` },
+});
+// Callback lands on /login with tokens in the URL hash;
+// onAuthStateChange fires and the AuthProvider syncs the session.
 ```
 
 **Frontend (API Request)**
 ```typescript
 // lib/api-client.ts
-const token = localStorage.getItem('authToken');
+const token = (await supabase.auth.getSession()).data.session?.access_token;
 fetch('/api/resumes', {
-  headers: {
-    'Authorization': `Bearer ${token}`
-  }
+  headers: { 'Authorization': `Bearer ${token}` }
 });
 ```
 
 **Backend (Verification)**
-```javascript
-// api/middleware/auth.js
-const token = req.headers.authorization.split('Bearer ')[1];
-const decodedToken = await admin.auth().verifyIdToken(token);
-const user = await User.findOne({ uid: decodedToken.uid });
+```typescript
+// api/middlewares/authMiddleware.ts
+const { payload } = await jwtVerify(token, secret, { audience: 'authenticated' });
+const user = await ensureUserRecord(payload.sub, payload.email);
 req.user = user;
 next();
 ```
@@ -330,41 +329,31 @@ next();
 
 ```
 1. USER ACTION
-   User drags PDF file → Dropzone component
+   User drags PDF file → Dropzone component → POST /api/resumes/analyze-and-upload
+   (file + optional vendor fields, multipart)
 
-2. FRONTEND PROCESSING
-   File object created → Calculate SHA-256 hash
-   → Check file size/type validation
+2. SERVER: DUPLICATE CHECK
+   Compute SHA-256 file hash
+   → Query resumes for { user_id, file_hash }
+   → Duplicate → 409 with the existing resume
 
-3. DUPLICATE CHECK
-   POST /api/resumes/check-duplicate
-   { fileHash, userId }
-   → Backend queries MongoDB for existing hash
-   → Returns { isDuplicate: boolean }
-
-4. AI ANALYSIS (if not duplicate)
+3. SERVER: AI ANALYSIS (if not duplicate)
    File → Convert to base64
    → Send to Google Gemini AI API
    → Prompt: "Extract name, skills, experience..."
    → Gemini returns JSON with structured data
-   → Validate JSON structure
 
-5. FILE STORAGE
-   File → AWS S3 PutObjectCommand
-   → Upload to s3://bucket/resumes/{userId}/{uuid}_{filename}
-   → Generate presigned URL (valid 7 days)
+4. FILE STORAGE
+   File → AWS S3 (PutObject)
+   → s3://bucket/resumes/{userId}/{uuid}_{filename}
+   → Row saved in Postgres with the key; the API later serves a
+     short-lived presigned URL (1 hour) so the bucket stays private
 
-6. DATABASE SAVE
-   POST /api/resumes/save
-   {
-     filename, filelink, fileHash,
-     analysis: { name, skills, ... },
-     vendor_id, vendor_name, user_id
-   }
-   → MongoDB creates Resume document
-   → Returns saved resume with _id
+5. DATABASE SAVE
+   INSERT INTO resumes { user_id, filename, file_hash, analysis, vendor_* }
+   → Returns saved resume (API shape keeps the legacy _id alias)
 
-7. UI UPDATE
+6. UI UPDATE
    Success response → Update Zustand store
    → Trigger re-render → Show resume in list
    → Display extracted data in UI
@@ -375,14 +364,14 @@ next();
 ```
 1. RECRUITER CREATES JOB
    POST /api/jobs/create
-   { title, description, requirements, location, type }
-   → Validate required fields
-   → Save to MongoDB jobs collection
-   → Return job object with _id
+   { title, description, requirements, location, employment_type, ... }
+   → Validate required fields (whitelisted columns)
+   → INSERT INTO jobs (metadata.created_by_id = caller uid)
+   → Return job object
 
 2. CANDIDATE BROWSING
    GET /api/jobs
-   → Fetch all open jobs from MongoDB
+   → Scoped query: jobs the caller created OR is assigned to
    → Return array of job objects
    → Display in job listing page
 
@@ -402,29 +391,27 @@ next();
 ### User Management Flow
 
 ```
-1. NEW USER SIGNUP
-   Firebase Auth → createUserWithEmailAndPassword
-   → Firebase creates user, returns UID
-   → Frontend receives Firebase user object
+1. NEW USER SIGN-UP
+   User requests magic link → Supabase Auth creates the user on first
+   sign-in (no password) → Frontend receives the session
 
 2. FIRST API REQUEST
    User makes first authenticated request
-   → Auth middleware verifies token
-   → User not found in MongoDB
-   → Middleware auto-creates User document
+   → Auth middleware verifies JWT
+   → User not found in public.users
+   → Middleware auto-creates the row
    {
-     uid: firebase_uid,
-     email: user_email,
+     uid: <supabase uuid>,
+     email: <from token>,
      role: 'user' (default)
    }
 
 3. ADMIN ROLE ASSIGNMENT
-   Admin uses /admin page
-   → GET /api/auth/users (admin only)
-   → Display all users
-   → PUT /api/auth/users/:id/role
-   { role: 'admin' | 'recruiter' | 'user' }
-   → Update user.role in MongoDB
+   Admin uses /admin page (enter the user's email)
+   → GET /api/auth/users (admin only) → resolve email → uid
+   → PUT /api/auth/users/role { uid, role: 'admin' | 'recruiter' | 'user' }
+   → UPDATE public.users SET role = ... WHERE uid = ...
+   (or offline: node api/scripts/make-admin.js <email>)
 ```
 
 ### Data Synchronization
@@ -455,7 +442,7 @@ Component → Zustand Store → API Call
 - Database connection pooling limited
 
 **File Storage**
-- Presigned URLs expire after 7 days
+- Presigned URLs expire after 1 hour
 - No CDN for global file delivery
 - Large file uploads block event loop
 
@@ -482,15 +469,15 @@ Implementation:
 
 **Database Optimization**
 ```
-Current: Single MongoDB instance
-Improved: MongoDB Atlas cluster with replica sets
+Current: Supabase Postgres (managed, pooled connections)
+Improved: Read replicas + query tuning as load grows
 
 - Enable read replicas for read-heavy operations
-- Implement database indexing strategy:
-  - Compound index on (user_id, uploaded_at)
-  - Text index on resume.analysis for search
-- Use MongoDB aggregation pipelines for analytics
-- Implement connection pooling (50-100 connections)
+- Implement database indexing strategy (already in supabase/schema.sql):
+  - Index on (user_id, uploaded_at) for resume lists
+  - Unique index on (user_id, file_hash) for dedupe
+  - GIN index on jobs.assigned_recruiters for the scoped job query
+- Use materialized views / SQL aggregation for analytics
 ```
 
 #### 2. **Asynchronous Processing**
@@ -546,7 +533,7 @@ What to cache:
 - Vendor information (TTL: 1 hour)
 
 Implementation:
-- Check Redis before MongoDB query
+- Check Redis before Postgres query
 - Cache-aside pattern (lazy loading)
 - Invalidate cache on data updates
 ```
@@ -689,7 +676,7 @@ HireNexa is a production-ready ATS built with modern, scalable technologies. The
 - AI-powered automation reduces manual work by 80%
 - Type-safe codebase (TypeScript) ensures reliability
 - Modular architecture allows incremental improvements
-- Cloud-native design (Firebase, AWS, MongoDB Atlas)
+- Cloud-native design (Supabase, AWS, Gemini)
 
 **Next Steps:**
 1. Implement job queue for async processing
