@@ -265,11 +265,12 @@ const apiClient = {
       fetcher({ url: '/auth/users/role', method: 'PUT', body: data }),
     createFromAuth: async (data: {uid: string, email: string, name?: string}) => {
       try {
+        // Server derives uid/email from the verified Firebase ID token,
+        // so the body is only used for the optional display name.
         const response = await fetcher({ 
           url: '/auth/create-from-auth', 
           method: 'POST', 
-          body: data, 
-          skipAuth: true 
+          body: data 
         });
         return response;
       } catch (error) {
@@ -277,18 +278,17 @@ const apiClient = {
         throw error;
       }
     },
-    makeAdmin: (data: {uid: string, email: string}) => {
-      return fetcher({ 
-        url: '/auth/make-admin', 
-        method: 'POST', 
-        body: data, 
-        skipAuth: true 
-      });
-    },
   },
   
   // Resume API
   resumes: {
+    // Full AI analysis + S3 upload + save — runs server-side so the AWS
+    // secret key and Gemini API key never reach the browser.
+    analyze: (payload: {
+      file: { name: string; type: string; data: string };
+      vendor_id?: string;
+      vendor_name?: string;
+    }) => fetcher({ url: '/resumes/analyze', method: 'POST', body: payload }),
     checkDuplicate: (fileHash: string, userId: string) => fetcher({ 
       url: '/resumes/check-duplicate', 
       method: 'POST', 
@@ -437,6 +437,33 @@ const apiClient = {
     checkForNewResumes: (jobId: string) => fetcher({
       url: `/jobs/${jobId}/check-new-resumes`
     }),
+
+    // Run AI match analysis server-side (Gemini key stays on the server)
+    analyzeMatches: (job: unknown, resumes: unknown[]) => fetcher({
+      url: '/jobs/match-analysis',
+      method: 'POST',
+      body: { job, resumes }
+    }),
+
+    // Download a candidate's resume file (arraybuffer response)
+    downloadCandidateFile: async (jobId: string, filename: string) => {
+      const token = await getAuthToken();
+      if (!token) {
+        throw new Error("Authentication required to download resume");
+      }
+      const response = await fetch(
+        `${API_BASE_URL}/jobs/${jobId}/candidates/${encodeURIComponent(filename)}/file`,
+        {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${token}` },
+        }
+      );
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to download resume: ${errorText}`);
+      }
+      return { data: await response.arrayBuffer() };
+    },
   },
 };
 

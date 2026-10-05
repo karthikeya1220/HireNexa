@@ -35,3 +35,12 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .qodo
+
+# Analysis/test artifacts
+.ua/
+.playwright-mcp/
+
+# Secrets — never track real environment files or service-account keys
+.env
+.env.local
+misc/*-firebase-adminsdk-*.json
