@@ -116,33 +116,34 @@ export default function EditJobPage() {
       try {
         setIsLoading(true)
 
-        // Add proper type assertion and checking
-        const response = await fetch(`http://localhost:5001/api/jobs/${jobId}`);
-        const jobData = await response.json() as { job?: JobData };
+        // Fetch through the API client (authenticated + env-based URL) — this
+        // previously hard-coded http://localhost:5001 with no auth header, so
+        // it only ever worked on the author's machine.
+        const job = await apiClient.jobs.getById(jobId) as unknown as JobData;
 
         // Add nullish coalescing to avoid property access errors
-        if (jobData?.job) {
-          setJobData(jobData.job);
+        if (job) {
+          setJobData(job);
 
           // Format the data for the form
           setFormData({
-            title: jobData.job.title || "",
-            company: jobData.job.company || "",
-            location: jobData.job.location || "",
-            description: jobData.job.description || "",
-            employment_type: jobData.job.employment_type || "",
-            experience_required: jobData.job.experience_required || "",
-            salary_range: jobData.job.salary_range || "",
-            status: jobData.job.status || "active",
-            requirements: jobData.job.requirements ? jobData.job.requirements.join("\n") : "",
-            benefits: jobData.job.benefits ? jobData.job.benefits.join("\n") : "",
-            skills_required: jobData.job.skills_required ? jobData.job.skills_required.join(", ") : "",
-            nice_to_have_skills: jobData.job.nice_to_have_skills ? jobData.job.nice_to_have_skills.join(", ") : "",
-            working_hours: jobData.job.working_hours || "",
-            mode_of_work: jobData.job.mode_of_work || "",
-            deadline: jobData.job.deadline || "",
-            key_responsibilities: jobData.job.key_responsibilities ? jobData.job.key_responsibilities.join("\n") : "",
-            about_company: jobData.job.about_company || "",
+            title: job.title || "",
+            company: job.company || "",
+            location: job.location || "",
+            description: job.description || "",
+            employment_type: job.employment_type || "",
+            experience_required: job.experience_required || "",
+            salary_range: job.salary_range || "",
+            status: job.status || "active",
+            requirements: job.requirements ? job.requirements.join("\n") : "",
+            benefits: job.benefits ? job.benefits.join("\n") : "",
+            skills_required: job.skills_required ? job.skills_required.join(", ") : "",
+            nice_to_have_skills: job.nice_to_have_skills ? job.nice_to_have_skills.join(", ") : "",
+            working_hours: job.working_hours || "",
+            mode_of_work: job.mode_of_work || "",
+            deadline: job.deadline || "",
+            key_responsibilities: job.key_responsibilities ? job.key_responsibilities.join("\n") : "",
+            about_company: job.about_company || "",
           })
         } else {
           toast({

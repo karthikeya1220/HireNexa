@@ -68,13 +68,13 @@ interface ApiError {
   message: string;
   status?: number;
   code?: string;
+  data?: { error?: string };
 }
 
 const VendorDetailsSheet = memo(
   ({
     editData,
     setEditData,
-    user,
     setVendors,
   }: {
     editData: {
@@ -84,7 +84,6 @@ const VendorDetailsSheet = memo(
       isSheetOpen: boolean
     }
     setEditData: React.Dispatch<React.SetStateAction<typeof editData>>
-    user: { email: string | null }
     setVendors: React.Dispatch<React.SetStateAction<Vendor[]>>
   }) => {
     if (!editData.selectedVendor) return null
@@ -148,24 +147,20 @@ const VendorDetailsSheet = memo(
       if (!editData.selectedVendor || !editData.formState) return
 
       try {
-        // Use API client to update vendor
-        
+        // Persist the edit — this previously only updated local state and
+        // toasted success without ever calling the API.
+        const updated = (await apiClient.vendors.update(
+          editData.selectedVendor._id,
+          editData.formState
+        )) as Vendor
 
-        // Update local state
+        // Update local state with the server's response
         setVendors((prevVendors) =>
           prevVendors.map((vendor) =>
             vendor._id === editData.selectedVendor?._id
-              ? {
-                  ...vendor,
-                  ...editData.formState!,
-                  metadata: {
-                    created_by: vendor.metadata?.created_by || "",
-                    created_by_id: vendor.metadata?.created_by_id || "",
-                    last_modified_by: user?.email || "",
-                  },
-                }
+              ? { ...vendor, ...updated }
               : vendor,
-          ),
+          )
         )
 
         toast.success("Vendor updated successfully");
@@ -180,7 +175,8 @@ const VendorDetailsSheet = memo(
         }))
       } catch (error) {
         console.error("Error updating vendor:", error)
-        toast.error("Failed to update vendor")
+        const apiError = error as ApiError
+        toast.error(apiError?.data?.error || "Failed to update vendor")
       }
     }
 
@@ -547,7 +543,11 @@ export default function VendorPage() {
 
   useEffect(() => {
     const fetchVendors = async () => {
-      if (!user) return
+      if (!user) {
+        // Stop the spinner instead of returning early (see job/page.tsx).
+        setIsLoading(false);
+        return
+      }
 
       try {
         const fetchedVendors = await apiClient.vendors.getAll() as Vendor[];
@@ -869,7 +869,6 @@ export default function VendorPage() {
         <VendorDetailsSheet
           editData={editData}
           setEditData={setEditData}
-          user={{ email: user?.email || null }}
           setVendors={setVendors}
         />
       </motion.div>

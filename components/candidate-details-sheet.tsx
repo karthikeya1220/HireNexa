@@ -204,11 +204,29 @@ export function CandidateDetailsSheet({
     }
   }
 
-  const downloadResume = () => {
-    // This would be implemented to download the actual resume file from the API
-    toast.success("Resume download started")
-    // TODO: Implement resume download using API client
-    // Example: apiClient.resumes.download(candidate.filename)
+  const downloadResume = async () => {
+    if (!candidate?.filename || !jobId) {
+      toast.error("Resume file not found");
+      return;
+    }
+    try {
+      const response = await apiClient.jobs.downloadCandidateFile(jobId, candidate.filename);
+      const blob = new Blob([response.data], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = candidate.filename.replace(/^[0-9a-f\-]{36}_/i, "") || "resume.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Error downloading resume:", error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to download resume"
+      );
+    }
   }
 
 

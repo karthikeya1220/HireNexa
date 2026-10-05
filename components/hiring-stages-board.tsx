@@ -13,9 +13,8 @@ import {
 } from "lucide-react"
 import { Candidate, CandidateStatus } from "@/app/jobs/[jobId]/candidates/page"
 import { format } from "date-fns"
-import { doc, updateDoc } from "firebase/firestore"
-import { db } from "@/FirebaseConfig"
 import { toast } from "sonner"
+import apiClient from "@/lib/api-client"
 import { CandidateDetailsSheet } from "@/components/candidate-details-sheet"
 
 const stages = [
@@ -47,19 +46,18 @@ export function HiringStagesBoard({ candidates, jobId, onCandidateUpdate }: Hiri
 
   const updateCandidateStage = async (candidateId: string, newStatus: CandidateStatus) => {
     try {
-      const candidateRef = doc(db, "jobs", jobId, "relevant_profiles", "profiles")
-      await updateDoc(candidateRef, {
-        [`candidates.${candidateId}.tracking`]: {
-          status: newStatus,
-          lastUpdated: new Date(),
-          updatedBy: 'current_user' // Replace with actual user email/id
-        }
-      })
+      // Persist through the API (MongoDB) — the previous implementation wrote
+      // to a Firestore path nothing reads, so drops silently did nothing.
+      await apiClient.jobs.updateCandidateStatus(jobId, candidateId, newStatus)
+      toast.success(`Candidate moved to ${newStatus.replace(/_/g, " ")}`)
+      // Refresh from the server in both paths so the board always shows
+      // real persisted state (reverts the card if the write failed).
       onCandidateUpdate()
-      toast.success(`Candidate moved to ${newStatus}`)
     } catch (error) {
       console.error("Error updating candidate stage:", error)
-      toast.error("Failed to update candidate stage")
+      const data = (error as { data?: { message?: string; error?: string } })?.data
+      toast.error(data?.message || data?.error || "Failed to update candidate stage")
+      onCandidateUpdate()
     }
   }
 
