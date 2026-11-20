@@ -12,6 +12,7 @@ const auth_1 = __importDefault(require("./routes/auth"));
 const resume_1 = __importDefault(require("./routes/resume"));
 const job_1 = __importDefault(require("./routes/job"));
 const vendor_1 = __importDefault(require("./routes/vendor"));
+const portal_1 = __importDefault(require("./routes/portal"));
 const cors_2 = require("./config/cors");
 // Importing db.ts validates Supabase env (fail-fast in production) and creates
 // the service-role client every controller shares.
@@ -53,6 +54,7 @@ app.use('/api/auth', authLimiter);
 // and claim those paths; everything else gets the tight 1mb default. (The old
 // 50mb global limit was a free memory-exhaustion DoS.)
 app.use('/api/resumes/analyze', express_1.default.json({ limit: '15mb' }));
+app.use('/api/portal', express_1.default.json({ limit: '15mb' }));
 app.use('/api/jobs/match-analysis', express_1.default.json({ limit: '5mb' }));
 app.use(express_1.default.json({ limit: '1mb' }));
 app.use(express_1.default.urlencoded({ extended: true, limit: '100kb' }));
@@ -78,6 +80,7 @@ app.get('/api/health', async (req, res) => {
     });
 });
 // Mount API routes
+app.use('/api/portal', portal_1.default);
 app.use('/api/auth', auth_1.default);
 app.use('/api/resumes', resume_1.default);
 app.use('/api/jobs', job_1.default);

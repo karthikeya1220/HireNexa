@@ -34,6 +34,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
 import apiClient from "@/lib/api-client"
+import { ScorecardView } from "@/components/scorecard/scorecard-view"
 
 const getStatusOrder = (status: CandidateStatus): number => {
   const order: Record<CandidateStatus, number> = {
@@ -267,8 +268,9 @@ export function CandidateDetailsSheet({
 
         <Tabs defaultValue="overview" value={activeTab} onValueChange={setActiveTab} className="flex-1">
           <div className="px-6 border-b">
-            <TabsList className="grid grid-cols-3 mb-2">
+            <TabsList className="grid grid-cols-4 mb-2">
               <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="scorecard">Scorecard</TabsTrigger>
               <TabsTrigger value="experience">Experience</TabsTrigger>
               <TabsTrigger value="tracking">Tracking</TabsTrigger>
             </TabsList>
@@ -523,6 +525,14 @@ export function CandidateDetailsSheet({
                   )}
                 </div>
               </div>
+            </TabsContent>
+
+            <TabsContent value="scorecard" className="mt-0">
+              <ScorecardView
+                jobId={jobId}
+                candidateFilename={candidate.filename}
+                candidateName={candidate.name}
+              />
             </TabsContent>
 
             <TabsContent value="experience" className="mt-0 space-y-6">

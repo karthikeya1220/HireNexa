@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const jobController_1 = require("../controllers/jobController");
+const scorecardController_1 = require("../controllers/scorecardController");
 const authMiddleware_1 = require("../middlewares/authMiddleware");
 const aiQuota_1 = require("../middlewares/aiQuota");
 const router = express_1.default.Router();
@@ -18,6 +19,10 @@ router.get('/', jobController_1.getAllJobs);
 // Get all resumes for matching — dumps all users' PII, admin only
 // (must be before /:id routes)
 router.get('/resumes/all', authMiddleware_1.isAdmin, jobController_1.getAllResumesForMatching);
+// Scorecards & Debrief Synthesis
+router.get('/:jobId/candidates/:candidateFilename/scorecards', scorecardController_1.getScorecards);
+router.post('/:jobId/candidates/:candidateFilename/scorecards', scorecardController_1.addScorecard);
+router.post('/:jobId/candidates/:candidateFilename/debrief', aiQuota_1.aiDailyQuota, scorecardController_1.generateDebriefSynthesis);
 // Job routes with ID parameter
 router.get('/:id', jobController_1.getJobById);
 // Job candidates routes (ownership enforced in the controller:

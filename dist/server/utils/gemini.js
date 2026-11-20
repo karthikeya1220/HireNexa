@@ -120,7 +120,7 @@ Output purely valid JSON without markdown wrapping.`;
 exports.analyzeResumeBuffer = analyzeResumeBuffer;
 // Evidence-backed match evaluation inspired by HackerRank hiring-agent rubric
 const analyzeMatch = async (job, resume) => {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j;
     try {
         const model = getGenerativeModel();
         // Look for GitHub profile in resume data
@@ -135,6 +135,17 @@ const analyzeMatch = async (job, resume) => {
                 githubData = await (0, github_1.fetchGitHubProfile)(ghLink);
             }
         }
+        // Custom rubric from job metadata if configured by user
+        const customRubric = (_d = (_c = job === null || job === void 0 ? void 0 : job.metadata) === null || _c === void 0 ? void 0 : _c.rubric) === null || _d === void 0 ? void 0 : _d.categories;
+        const rubricText = Array.isArray(customRubric) && customRubric.length > 0
+            ? `## Custom Role Rubric (Configured by Hiring Team):
+${customRubric.map((c) => `- ${c.key} (${c.label}, Max ${c.weight} pts): ${c.description || ''}`).join('\n')}`
+            : `## Rubric Breakdown:
+Score the candidate across these 4 explicit categories (Sum = 100 max):
+1. production_experience (Max 35): Real-world production systems, scale, leadership, commercial delivery.
+2. technical_skills (Max 30): Direct alignment with required tech stack and depth.
+3. self_projects_and_code (Max 25): Depth of personal/open-source projects, architecture complexity, GitHub activity.
+4. domain_and_education (Max 10): Relevance of education, domain knowledge, certifications.`;
         const prompt = `
 # Intelligent Talent Evaluation Pipeline
 You are an expert technical hiring panel evaluating a candidate's fit for a role.
@@ -149,11 +160,11 @@ Description: ${(job === null || job === void 0 ? void 0 : job.description) || 'N
 
 ## Candidate Data:
 ${JSON.stringify({
-            name: (resume === null || resume === void 0 ? void 0 : resume.name) || ((_c = resume === null || resume === void 0 ? void 0 : resume.analysis) === null || _c === void 0 ? void 0 : _c.name),
-            skills: ((_d = resume === null || resume === void 0 ? void 0 : resume.analysis) === null || _d === void 0 ? void 0 : _d.key_skills) || (resume === null || resume === void 0 ? void 0 : resume.skills),
-            experience: (_e = resume === null || resume === void 0 ? void 0 : resume.analysis) === null || _e === void 0 ? void 0 : _e.work_experience_details,
-            projects: (_f = resume === null || resume === void 0 ? void 0 : resume.analysis) === null || _f === void 0 ? void 0 : _f.project_experience,
-            education: (_g = resume === null || resume === void 0 ? void 0 : resume.analysis) === null || _g === void 0 ? void 0 : _g.education_details,
+            name: (resume === null || resume === void 0 ? void 0 : resume.name) || ((_e = resume === null || resume === void 0 ? void 0 : resume.analysis) === null || _e === void 0 ? void 0 : _e.name),
+            skills: ((_f = resume === null || resume === void 0 ? void 0 : resume.analysis) === null || _f === void 0 ? void 0 : _f.key_skills) || (resume === null || resume === void 0 ? void 0 : resume.skills),
+            experience: (_g = resume === null || resume === void 0 ? void 0 : resume.analysis) === null || _g === void 0 ? void 0 : _g.work_experience_details,
+            projects: (_h = resume === null || resume === void 0 ? void 0 : resume.analysis) === null || _h === void 0 ? void 0 : _h.project_experience,
+            education: (_j = resume === null || resume === void 0 ? void 0 : resume.analysis) === null || _j === void 0 ? void 0 : _j.education_details,
             github_signals: githubData
                 ? {
                     username: githubData.username,
@@ -165,12 +176,7 @@ ${JSON.stringify({
                 : null,
         }, null, 2)}
 
-## Rubric Breakdown:
-Score the candidate across these 4 explicit categories (Sum = 100 max):
-1. production_experience (Max 35): Real-world production systems, scale, leadership, commercial delivery.
-2. technical_skills (Max 30): Direct alignment with required tech stack and depth.
-3. self_projects_and_code (Max 25): Depth of personal/open-source projects, architecture complexity, GitHub activity.
-4. domain_and_education (Max 10): Relevance of education, domain knowledge, certifications.
+${rubricText}
 
 Bonuses (Max +15 total):
 - GSoC / recognized open source contributor (+5)

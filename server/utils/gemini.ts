@@ -193,6 +193,18 @@ export const analyzeMatch = async (job: any, resume: any): Promise<MatchAnalysis
       }
     }
 
+    // Custom rubric from job metadata if configured by user
+    const customRubric = job?.metadata?.rubric?.categories;
+    const rubricText = Array.isArray(customRubric) && customRubric.length > 0
+      ? `## Custom Role Rubric (Configured by Hiring Team):
+${customRubric.map((c: any) => `- ${c.key} (${c.label}, Max ${c.weight} pts): ${c.description || ''}`).join('\n')}`
+      : `## Rubric Breakdown:
+Score the candidate across these 4 explicit categories (Sum = 100 max):
+1. production_experience (Max 35): Real-world production systems, scale, leadership, commercial delivery.
+2. technical_skills (Max 30): Direct alignment with required tech stack and depth.
+3. self_projects_and_code (Max 25): Depth of personal/open-source projects, architecture complexity, GitHub activity.
+4. domain_and_education (Max 10): Relevance of education, domain knowledge, certifications.`;
+
     const prompt = `
 # Intelligent Talent Evaluation Pipeline
 You are an expert technical hiring panel evaluating a candidate's fit for a role.
@@ -223,12 +235,7 @@ ${JSON.stringify({
     : null,
 }, null, 2)}
 
-## Rubric Breakdown:
-Score the candidate across these 4 explicit categories (Sum = 100 max):
-1. production_experience (Max 35): Real-world production systems, scale, leadership, commercial delivery.
-2. technical_skills (Max 30): Direct alignment with required tech stack and depth.
-3. self_projects_and_code (Max 25): Depth of personal/open-source projects, architecture complexity, GitHub activity.
-4. domain_and_education (Max 10): Relevance of education, domain knowledge, certifications.
+${rubricText}
 
 Bonuses (Max +15 total):
 - GSoC / recognized open source contributor (+5)

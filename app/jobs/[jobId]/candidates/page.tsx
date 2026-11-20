@@ -23,6 +23,8 @@ import {
   Building,
   RefreshCw,
   Loader2,
+  Zap,
+  Globe,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useRouter } from "next/navigation"
@@ -38,6 +40,7 @@ import { CandidateGridView } from "@/components/candidate-grid-view"
 import { Pagination } from "@/components/pagination"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -802,7 +805,26 @@ export default function CandidatesPage() {
 
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
             <h1 className="text-3xl font-bold">Relevant Candidates</h1>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => router.push(`/portal/${jobId}`)}
+                className="gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <Globe className="w-3.5 h-3.5 text-primary" />
+                Public Intake Portal
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => router.push(`/jobs/${jobId}/triage`)}
+                className="gap-1.5 text-xs bg-primary font-semibold shadow-sm"
+              >
+                <Zap className="w-3.5 h-3.5 text-amber-300 fill-amber-300" />
+                Fast Triage Queue
+              </Button>
+              <Separator orientation="vertical" className="h-6 mx-1 hidden sm:block" />
               <Button
                 variant={currentView === "list" ? "default" : "outline"}
                 size="sm"

@@ -14,6 +14,11 @@ import {
   analyzeMatches,
   getCandidateFile
 } from '../controllers/jobController';
+import {
+  addScorecard,
+  getScorecards,
+  generateDebriefSynthesis
+} from '../controllers/scorecardController';
 import { authenticate, isAdmin } from '../middlewares/authMiddleware';
 import { aiDailyQuota } from '../middlewares/aiQuota';
 
@@ -33,6 +38,11 @@ router.get('/', getAllJobs);
 // Get all resumes for matching — dumps all users' PII, admin only
 // (must be before /:id routes)
 router.get('/resumes/all', isAdmin, getAllResumesForMatching);
+
+// Scorecards & Debrief Synthesis
+router.get('/:jobId/candidates/:candidateFilename/scorecards', getScorecards);
+router.post('/:jobId/candidates/:candidateFilename/scorecards', addScorecard);
+router.post('/:jobId/candidates/:candidateFilename/debrief', aiDailyQuota, generateDebriefSynthesis);
 
 // Job routes with ID parameter
 router.get('/:id', getJobById);

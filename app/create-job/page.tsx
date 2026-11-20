@@ -19,6 +19,8 @@ import { Label } from "@/components/ui/label"
 import { AlertCircle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import apiClient from "@/lib/api-client"
+import { RubricConfigEditor } from "@/components/rubric/rubric-config-editor"
+import { type CustomJobRubric, DEFAULT_JOB_RUBRIC } from "@/types/rubric"
 
 interface JobFormData {
   title: string
@@ -47,6 +49,7 @@ export default function CreateJobPage() {
   const [benefits, setBenefits] = useState<string[]>([])
   const [skillsRequired, setSkillsRequired] = useState<string[]>([])
   const [niceToHaveSkills, setNiceToHaveSkills] = useState<string[]>([])
+  const [rubric, setRubric] = useState<CustomJobRubric>(DEFAULT_JOB_RUBRIC)
 
   const [formData, setFormData] = useState<JobFormData>({
     title: "",
@@ -173,6 +176,7 @@ export default function CreateJobPage() {
           created_by: user?.email || "",
           created_by_id: user?.uid || "",
           last_modified_by: user?.email || "",
+          rubric,
         },
       }
 
@@ -494,6 +498,7 @@ export default function CreateJobPage() {
                         placeholder="List any additional skills that are nice to have, one per line"
                       />
                     </div>
+                    <RubricConfigEditor rubric={rubric} onChange={setRubric} />
                   </CardContent>
                 </Card>
               </TabsContent>
