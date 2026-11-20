@@ -12,7 +12,7 @@ const genAI = new GoogleGenerativeAI(apiKey);
 // Helper for model fallback
 const getGenerativeModel = () => {
   return genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-flash-latest',
     generationConfig: {
       temperature: 0.2, // Low temperature for consistent scoring
       topP: 0.95,
