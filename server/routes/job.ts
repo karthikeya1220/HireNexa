@@ -19,6 +19,14 @@ import {
   getScorecards,
   generateDebriefSynthesis
 } from '../controllers/scorecardController';
+import {
+  getSilverMedalists,
+  reengageCandidate
+} from '../controllers/talentPoolController';
+import {
+  generateEmailDraft,
+  sendCandidateEmail
+} from '../controllers/communicationsController';
 import { authenticate, isAdmin } from '../middlewares/authMiddleware';
 import { aiDailyQuota } from '../middlewares/aiQuota';
 
@@ -43,6 +51,14 @@ router.get('/resumes/all', isAdmin, getAllResumesForMatching);
 router.get('/:jobId/candidates/:candidateFilename/scorecards', getScorecards);
 router.post('/:jobId/candidates/:candidateFilename/scorecards', addScorecard);
 router.post('/:jobId/candidates/:candidateFilename/debrief', aiDailyQuota, generateDebriefSynthesis);
+
+// Silver Medalist Re-surfacing & Talent Graph
+router.get('/:jobId/silver-medalists', getSilverMedalists);
+router.post('/:jobId/reengage', reengageCandidate);
+
+// Candidate Communications & Email Generation
+router.post('/email/draft', aiDailyQuota, generateEmailDraft);
+router.post('/:jobId/candidates/:candidateFilename/email', sendCandidateEmail);
 
 // Job routes with ID parameter
 router.get('/:id', getJobById);

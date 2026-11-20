@@ -6,6 +6,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const jobController_1 = require("../controllers/jobController");
 const scorecardController_1 = require("../controllers/scorecardController");
+const talentPoolController_1 = require("../controllers/talentPoolController");
+const communicationsController_1 = require("../controllers/communicationsController");
 const authMiddleware_1 = require("../middlewares/authMiddleware");
 const aiQuota_1 = require("../middlewares/aiQuota");
 const router = express_1.default.Router();
@@ -23,6 +25,12 @@ router.get('/resumes/all', authMiddleware_1.isAdmin, jobController_1.getAllResum
 router.get('/:jobId/candidates/:candidateFilename/scorecards', scorecardController_1.getScorecards);
 router.post('/:jobId/candidates/:candidateFilename/scorecards', scorecardController_1.addScorecard);
 router.post('/:jobId/candidates/:candidateFilename/debrief', aiQuota_1.aiDailyQuota, scorecardController_1.generateDebriefSynthesis);
+// Silver Medalist Re-surfacing & Talent Graph
+router.get('/:jobId/silver-medalists', talentPoolController_1.getSilverMedalists);
+router.post('/:jobId/reengage', talentPoolController_1.reengageCandidate);
+// Candidate Communications & Email Generation
+router.post('/email/draft', aiQuota_1.aiDailyQuota, communicationsController_1.generateEmailDraft);
+router.post('/:jobId/candidates/:candidateFilename/email', communicationsController_1.sendCandidateEmail);
 // Job routes with ID parameter
 router.get('/:id', jobController_1.getJobById);
 // Job candidates routes (ownership enforced in the controller:

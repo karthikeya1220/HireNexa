@@ -35,6 +35,7 @@ import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
 import apiClient from "@/lib/api-client"
 import { ScorecardView } from "@/components/scorecard/scorecard-view"
+import { CandidateEmailDialog } from "@/components/candidate/candidate-email-dialog"
 
 const getStatusOrder = (status: CandidateStatus): number => {
   const order: Record<CandidateStatus, number> = {
@@ -96,6 +97,7 @@ export function CandidateDetailsSheet({
 }: CandidateDetailsSheetProps) {
   const [candidate, setCandidate] = useState<Candidate | null>(initialCandidate)
   const [activeTab, setActiveTab] = useState("overview")
+  const [isEmailOpen, setIsEmailOpen] = useState(false)
 
   useEffect(() => {
     setCandidate(initialCandidate)
@@ -723,11 +725,24 @@ export function CandidateDetailsSheet({
             <Download className="w-4 h-4 mr-2" />
             Download Resume
           </Button>
-          <Button className="flex-1">
+          <Button className="flex-1" onClick={() => setIsEmailOpen(true)}>
             <Mail className="w-4 h-4 mr-2" />
-            Contact
+            Contact Candidate
           </Button>
         </SheetFooter>
+
+        {candidate && (
+          <CandidateEmailDialog
+            isOpen={isEmailOpen}
+            onClose={() => setIsEmailOpen(false)}
+            jobId={jobId}
+            candidateFilename={candidate.filename}
+            candidateName={candidate.name}
+            candidateEmail={candidate.email}
+            jobTitle="Position"
+            companyName="HireNexa"
+          />
+        )}
       </SheetContent>
     </Sheet>
   )

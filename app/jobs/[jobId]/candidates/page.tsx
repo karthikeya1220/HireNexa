@@ -36,6 +36,7 @@ import { HiringStagesBoard } from "@/components/hiring-stages-board"
 import { useHiringStages } from "@/store/hiring-stages"
 import { Input } from "@/components/ui/input"
 import { CandidateDetailsSheet } from "@/components/candidate-details-sheet"
+import { SilverMedalistsBanner } from "@/components/talent-pool/silver-medalists-banner"
 import { CandidateGridView } from "@/components/candidate-grid-view"
 import { Pagination } from "@/components/pagination"
 import { Card, CardContent } from "@/components/ui/card"
@@ -802,6 +803,12 @@ export default function CandidatesPage() {
               </CardContent>
             </Card>
           )}
+
+          {/* Silver Medalists Talent Resurfacing Banner */}
+          <SilverMedalistsBanner
+            jobId={jobId}
+            onCandidateReengaged={refreshCandidates}
+          />
 
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
             <h1 className="text-3xl font-bold">Relevant Candidates</h1>
