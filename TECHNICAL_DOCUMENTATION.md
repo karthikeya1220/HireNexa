@@ -105,11 +105,11 @@
 - **Admin API**: Server-side user provisioning (used by the migration script)
 - **Free Tier**: Generous limits for small teams
 
-**AWS S3 (File Storage)**
-- **Scalability**: Unlimited storage, pay-as-you-grow
-- **Durability**: 99.999999999% durability guarantee
-- **Presigned URLs**: Secure, temporary file access without exposing credentials
-- **CDN Integration**: CloudFront integration for global file delivery
+**Supabase Storage (File Storage)**
+- **Server-side only**: Files are written and read through the service-role client; the browser never touches storage directly
+- **Signed URLs**: Secure, temporary file access without exposing credentials
+- **One platform**: Same Supabase project as Auth and Postgres — no separate cloud account
+- **Note**: Historical S3-backed resume files were not migrated and are unavailable through the application
 
 ---
 
@@ -143,8 +143,8 @@
         ┌─────────┼─────────┬─────────────┐
         │         │         │             │
 ┌───────▼──┐ ┌───▼────┐ ┌──▼──────────┐ ┌──▼───────────┐
-│ Supabase │ │ AWS S3 │ │  Supabase   │ │ Gemini AI    │
-│ Postgres │ │ Bucket │ │  Auth       │ │ API          │
+│ Supabase │ │Storage │ │  Supabase   │ │ Gemini AI    │
+│ Postgres │ │ bucket │ │  Auth       │ │ API          │
 │          │ │        │ │             │ │              │
 │ Users    │ │ Resume │ │ Magic-link  │ │ Resume       │
 │ Resumes  │ │ Files  │ │ JWT issue   │ │ Analysis     │
@@ -172,7 +172,7 @@
 
 **Data Layer**
 - **Supabase Postgres Tables**: users, resumes, jobs, job_candidates, vendors, company_feedback (schema in `/supabase/schema.sql`)
-- **AWS S3 Buckets**: Resume file storage with folder structure
+- **Supabase Storage bucket**: Resume file storage with folder structure (bucket set by `SUPABASE_STORAGE_BUCKET`, default `resumes`)
 - **Supabase Auth**: Passwordless magic-link authentication (JWTs verified by the API)
 
 ### Database Schema Design
@@ -195,7 +195,7 @@
   id: uuid (primary key)
   user_id: string (FK → users.uid)
   filename: string
-  filelink: string (S3 presigned URL, refreshed per request)
+  filelink: string (Supabase Storage signed URL, 1-hour expiry)
   file_hash: string (SHA-256; unique per user for duplicate detection)
   analysis: jsonb {
     name: string
@@ -346,10 +346,10 @@ next();
    → Gemini returns JSON with structured data
 
 4. FILE STORAGE
-   File → AWS S3 (PutObject)
-   → s3://bucket/resumes/{userId}/{uuid}_{filename}
+   File → Supabase Storage (server-side upload)
+   → {bucket}/resumes/{userId}/{uuid}_{filename}
    → Row saved in Postgres with the key; the API later serves a
-     short-lived presigned URL (1 hour) so the bucket stays private
+     short-lived signed URL (1 hour) so the bucket stays private
 
 5. DATABASE SAVE
    INSERT INTO resumes { user_id, filename, file_hash, analysis, vendor_* }
@@ -444,7 +444,7 @@ Component → Zustand Store → API Call
 - Database connection pooling limited
 
 **File Storage**
-- Presigned URLs expire after 1 hour
+- Signed URLs expire after 1 hour
 - No CDN for global file delivery
 - Large file uploads block event loop
 
@@ -542,11 +542,10 @@ Implementation:
 
 **CDN for Static Assets**
 ```
-Current: S3 presigned URLs
-Improved: CloudFront CDN + S3
+Current: Supabase Storage signed URLs
+Improved: CDN in front of storage (future)
 
 - Distribute resume files globally
-- Reduce S3 GET request costs
 - Faster file downloads for users
 - Longer URL expiration (1 year)
 ```
@@ -631,8 +630,7 @@ Optimized:
 
 **Storage Costs**
 ```
-S3 Lifecycle Policies:
-- Move old resumes to S3 Glacier after 1 year
+Storage lifecycle:
 - Delete resumes after 3 years (with user consent)
 - Compress PDFs before upload
 ```
@@ -678,7 +676,7 @@ HireNexa is a production-ready ATS built with modern, scalable technologies. The
 - AI-powered automation reduces manual work by 80%
 - Type-safe codebase (TypeScript) ensures reliability
 - Modular architecture allows incremental improvements
-- Cloud-native design (Supabase, AWS, Gemini)
+- Cloud-native design (Supabase, Gemini)
 
 **Next Steps:**
 1. Implement job queue for async processing

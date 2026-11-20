@@ -134,7 +134,7 @@ HireNexa addresses these challenges by providing:
 | **Google Gemini AI** | Resume analysis and NLP |
 | **Supabase Auth** | Passwordless email magic-link authentication |
 | **Supabase Postgres** | Primary database (RLS, deny-by-default) |
-| **AWS S3** | Resume file storage |
+| **Supabase Storage** | Resume file storage (server-side only) |
 
 ### Development Tools
 | Tool | Purpose |
@@ -172,13 +172,13 @@ HireNexa follows a modern **three-tier architecture** with clear separation of c
 
 #### 3. **Data Layer**
 - **Supabase Postgres** accessed through the service-role client (PostgREST); RLS is deny-by-default so the browser can never query tables directly
-- **AWS S3** for scalable file storage (resumes, documents)
+- **Supabase Storage** for resume file storage (server-side only; the browser never talks to storage directly)
 - **Google Gemini AI** for intelligent resume parsing and analysis
 
 ### Data Flow
 
 ```
-User → Next.js Frontend → Supabase Auth (magic link) → Express API → Postgres/S3/Gemini AI
+User → Next.js Frontend → Supabase Auth (magic link) → Express API → Postgres/Storage/Gemini AI
                                                                ↓
                                                         Response with Data
 ```
@@ -193,7 +193,7 @@ User → Next.js Frontend → Supabase Auth (magic link) → Express API → Pos
 2. **Resume Upload Flow**:
    - User uploads resume via drag-and-drop
    - File hashed for duplicate detection, sent to Gemini AI for analysis
-   - File uploaded to AWS S3 (1-hour signed URL)
+   - File uploaded to Supabase Storage (1-hour signed URL)
    - Analysis stored in `resumes` table
 
 3. **Candidate Management Flow**:
@@ -255,8 +255,7 @@ Before you begin, ensure you have the following installed:
 - **Git** for version control
 
 You'll also need accounts for:
-- [Supabase](https://supabase.com/) (database + authentication)
-- [AWS](https://aws.amazon.com/) (S3 bucket)
+- [Supabase](https://supabase.com/) (database, authentication + file storage)
 - [Google AI Studio](https://makersuite.google.com/) (Gemini API key)
 
 ### Installation
@@ -285,11 +284,8 @@ You'll also need accounts for:
    SUPABASE_URL=https://your-project-ref.supabase.co
    SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
-   # AWS S3
-   AWS_ACCESS_KEY_ID=your-access-key
-   AWS_SECRET_ACCESS_KEY=your-secret-key
-   AWS_REGION=us-east-1
-   S3_BUCKET_NAME=your-bucket-name
+   # Supabase Storage (resume files; optional — defaults to `resumes`)
+   SUPABASE_STORAGE_BUCKET=resumes
 
    # Google Gemini AI
    GEMINI_API_KEY=your-gemini-api-key
@@ -325,20 +321,11 @@ You'll also need accounts for:
    - Migration from the old Firebase/MongoDB backend? See
      [`DATA-MIGRATION.md`](./DATA-MIGRATION.md)
 
-5. **Set up AWS S3**
-   - Create an S3 bucket in your AWS account
-   - Configure CORS settings:
-     ```json
-     [
-       {
-         "AllowedHeaders": ["*"],
-         "AllowedMethods": ["GET", "PUT", "POST", "DELETE"],
-         "AllowedOrigins": ["*"],
-         "ExposeHeaders": []
-       }
-     ]
-     ```
-   - Create IAM user with S3 access and save credentials
+5. **Set up Supabase Storage**
+   - Create a Storage bucket named `resumes` in the Supabase dashboard
+     (or set `SUPABASE_STORAGE_BUCKET` to any existing bucket name)
+   - No CORS or IAM setup: files are written and read server-side only
+     through the service-role client
 
 6. **Start the development servers**
    ```bash
@@ -399,7 +386,7 @@ npm start
 2. In [Render](https://render.com/): **New + → Blueprint →** select the repository
 3. Enter the prompted secrets and set:
    - `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` (Supabase → Project Settings → API)
-   - `GEMINI_API_KEY`, AWS keys + `S3_BUCKET_NAME`
+   - `GEMINI_API_KEY`, `SUPABASE_STORAGE_BUCKET` (optional; defaults to `resumes`)
    - `CORS_ORIGINS` = your Vercel URL, e.g. `https://hirenexa.vercel.app`
 4. Deploy — build `npm ci && npm run build:server`, start `node dist/server/server.js`,
    health check `/api/health` (returns 503 until the Supabase env vars are valid)
@@ -463,7 +450,7 @@ the first request).
 Make sure all these are set in your production environment:
 - ✅ `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
 - ✅ `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- ✅ `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET_NAME`
+- ✅ `SUPABASE_STORAGE_BUCKET` (optional; defaults to `resumes`)
 - ✅ `GEMINI_API_KEY`
 - ✅ `NEXT_PUBLIC_API_URL` (your backend URL)
 
@@ -510,7 +497,6 @@ Distributed under the MIT License. See `LICENSE` file for more information.
 - [Shadcn/UI](https://ui.shadcn.com/) - Beautiful UI Components
 - [Supabase](https://supabase.com/) - Database & Authentication
 - [Google Gemini](https://deepmind.google/technologies/gemini/) - AI Platform
-- [AWS](https://aws.amazon.com/) - Cloud Services
 
 ---
 

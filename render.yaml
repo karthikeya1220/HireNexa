@@ -23,14 +23,8 @@ services:
       # Gemini (AI resume/match analysis)
       - key: GEMINI_API_KEY
         sync: false
-      # S3 (resume storage)
-      - key: AWS_REGION
-        sync: false
-      - key: AWS_ACCESS_KEY_ID
-        sync: false
-      - key: AWS_SECRET_ACCESS_KEY
-        sync: false
-      - key: S3_BUCKET_NAME
+      # Supabase Storage bucket for resume files (optional, default: resumes)
+      - key: SUPABASE_STORAGE_BUCKET
         sync: false
       # Browser origins allowed to call the API, comma-separated.
       # Set to your Vercel URL, e.g. https://hirenexa.vercel.app

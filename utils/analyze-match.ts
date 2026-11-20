@@ -3,14 +3,55 @@ import apiClient from "../lib/api-client";
 // Thin client wrappers: Gemini is called server-side only (see
 // server/utils/gemini.ts) — the API key never reaches the browser.
 
+export interface RubricCategoryScore {
+  key: string;
+  label: string;
+  score: number;
+  maxScore: number;
+  evidence: string;
+}
+
+export interface RubricBonus {
+  key: string;
+  label: string;
+  points: number;
+  reason: string;
+}
+
+export interface GitHubRepoSummary {
+  name: string;
+  description: string | null;
+  stars: number;
+  forks: number;
+  language: string | null;
+  url: string;
+  updatedAt: string;
+}
+
+export interface GitHubProfileData {
+  username: string;
+  name: string | null;
+  bio: string | null;
+  publicReposCount: number;
+  followers: number;
+  avatarUrl: string;
+  topLanguages: string[];
+  featuredRepos: GitHubRepoSummary[];
+  profileUrl: string;
+}
+
 export interface MatchAnalysis {
   filename: string;
   matchPercentage: number;
-  matchingSkills?: string[];
-  missingRequirements?: string[];
-  experienceMatch?: boolean;
-  educationMatch?: boolean;
+  matchingSkills: string[];
+  missingRequirements: string[];
+  experienceMatch: boolean;
+  educationMatch: boolean;
   overallAssessment?: string;
+  categoryBreakdown?: RubricCategoryScore[];
+  bonuses?: RubricBonus[];
+  flagsOrGaps?: string[];
+  githubEnrichment?: GitHubProfileData | null;
 }
 
 /**

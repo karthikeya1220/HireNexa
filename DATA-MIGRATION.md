@@ -21,18 +21,17 @@ data follows.
    remapping every uid reference (`jobs.metadata.created_by_id`,
    `jobs.assigned_recruiters[]`, `resumes.user_id`,
    `job_candidates.user_id`, `vendors.metadata.created_by_id`).
-5. Copies each S3 object from `resumes/<legacyUid>/<filename>` to
-   `resumes/<supabaseUuid>/<filename>` — the API derives the S3 key from the
-   current `user_id`, so old files must move or owners lose access.
-6. Imports company feedback into `company_feedback` and sets
+5. Imports company feedback into `company_feedback` and sets
    `users.profile_complete` from Firestore.
 
 ### Things to know
 
 - **New ids**: Mongo `_id`s are 24-hex; Postgres uses uuids, so jobs, resumes,
   candidates and vendors get new ids. Any bookmarked job URLs change once.
-- **S3 copy**: needs the same AWS credentials the server uses. Objects are
-  copied (not moved); delete the old prefixes yourself after verifying.
+- **Resume files are not copied**: the app stores and serves files from
+  Supabase Storage only. Historical S3-backed files were not migrated and are
+  unavailable through the application; the old bucket and its data were not
+  deleted by this migration.
 - **Re-runs**: mostly safe — existing users/jobs are skipped, duplicate
   resumes (same user + hash) are skipped, candidates upsert by
   `(job_id, filename)`.
@@ -50,12 +49,6 @@ data follows.
 MONGODB_URI=mongodb+srv://user:pass@cluster/hirenexa   # OLD database
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-
-# S3 copy (recommended — without these, resume files stay under old keys)
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-S3_BUCKET_NAME=...
 
 # Optional — Firestore profiles + company feedback
 FIREBASE_PROJECT_ID=...
@@ -84,7 +77,6 @@ The old Firebase service-account JSON in `misc/` works too if you point
    ```
 
    Useful flags:
-   - `--skip-s3` — skip copying S3 objects (files stay under legacy prefixes)
    - `--skip-firestore` — skip Firestore profiles/feedback
    - `--dry-run` — no writes at all
 
@@ -104,7 +96,7 @@ The old Firebase service-account JSON in `misc/` works too if you point
 - [ ] Supabase **Authentication → URL Configuration**: Site URL + `{origin}/login`
       redirect URL added (dev and production)
 - [ ] Migration script run (dry-run reviewed first)
-- [ ] S3 objects copied to new prefixes (or consciously skipped)
+- [ ] Acknowledged: historical S3 resume files are not migrated (Supabase Storage is the only store)
 - [ ] Admin roles granted via `make-admin.js`
 - [ ] Magic-link sign-in works for a migrated account
 - [ ] Rotate the previously leaked AWS keys and purge old secrets from git

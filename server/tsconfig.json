@@ -12,6 +12,7 @@
     "declaration": true,
     "noImplicitAny": true,
     "outDir": "../dist",
+    "rootDir": "..",
     "baseUrl": ".",
     "paths": {
       "*": ["*"]

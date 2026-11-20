@@ -64,14 +64,12 @@ interface TransformedResume {
   userEmail: string;
 }
 
-interface MatchAnalysis {
-  matchPercentage: number
-  matchingSkills: string[]
-  missingRequirements: string[]
-  experienceMatch: boolean
-  educationMatch: boolean
-  overallAssessment: string
-}
+import {
+  type MatchAnalysis,
+  type RubricCategoryScore,
+  type RubricBonus,
+  type GitHubProfileData,
+} from "@/utils/analyze-match"
 
 interface WorkExperience {
   company: string

@@ -3,12 +3,12 @@ import crypto from 'crypto';
 import path from 'path';
 import { supabaseAdmin, isUuid, httpStatusForDbError } from '../db';
 import { type ResumeRow, toResume } from '../models/Resume';
-import { s3Client, bucketName } from '../../AWSConfig';
-import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuidv4 } from 'uuid';
 import { analyzeResumeBuffer, type ResumeAnalysis } from '../utils/gemini';
-import { errHttpStatus, errName } from '../utils/errors';
+
+// Supabase Storage bucket holding resume files (server-side only — the
+// browser never talks to storage directly; every access flows through this API).
+const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'resumes';
 
 // Define interface for request with user
 interface AuthRequest extends Request {
@@ -57,7 +57,7 @@ const findResumeByIdForUser = async (id: string, userId: string): Promise<Resume
 };
 
 // Full resume pipeline, server-side: hash -> duplicate check -> AI analysis
-// -> S3 upload -> signed URL -> save. Replaces the old client-side flow that
+// -> Supabase Storage upload -> signed URL -> save. Replaces the old client-side flow that
 // shipped the AWS secret key and Gemini API key to the browser.
 export const analyzeAndUpload = async (req: AuthRequest, res: Response) => {
   try {
@@ -108,28 +108,21 @@ export const analyzeAndUpload = async (req: AuthRequest, res: Response) => {
     const safeName = path.basename(file.name).replace(/[/\\]/g, '_');
     const uniqueFilename = `${uuidv4()}_${safeName}`;
 
-    // Upload file to AWS S3
-    const s3Key = `resumes/${userId}/${uniqueFilename}`;
-    await s3Client.send(
-      new PutObjectCommand({
-        Bucket: bucketName,
-        Key: s3Key,
-        Body: fileBuffer,
-        ContentType: file.type,
-      })
-    );
+    // Upload the file to Supabase Storage (service-role, server-side only)
+    const storagePath = `resumes/${userId}/${uniqueFilename}`;
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from(STORAGE_BUCKET)
+      .upload(storagePath, fileBuffer, { contentType: file.type, upsert: false });
+    if (uploadError) throw uploadError;
 
     // Generate a signed URL (valid for 1 hour — primary access is via the
     // authenticated /resumes/:id/content and /:id/download endpoints; this
     // link is only a fallback, so it must not be a long-lived capability URL)
-    const filelink = await getSignedUrl(
-      s3Client,
-      new GetObjectCommand({
-        Bucket: bucketName,
-        Key: s3Key,
-      }),
-      { expiresIn: 3600 }
-    );
+    const { data: signed, error: signError } = await supabaseAdmin.storage
+      .from(STORAGE_BUCKET)
+      .createSignedUrl(storagePath, 3600);
+    if (signError) throw signError;
+    const filelink = signed.signedUrl;
 
     // Ensure the user record exists
     await ensureUserRecord(userId, req.user?.email || '');
@@ -160,7 +153,7 @@ export const analyzeAndUpload = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// Stream a resume's file out of S3 with auth-correct ownership already checked
+// Stream a resume's file out of Supabase Storage with auth-correct ownership already checked
 // by the caller. Shared by /resumes/:id/content, /resumes/:id/download and the
 // job candidate file route.
 export const streamResumeToClient = async (
@@ -168,29 +161,26 @@ export const streamResumeToClient = async (
   resume: { user_id: string; filename: string },
   asDownload: boolean
 ) => {
-  const key = `resumes/${resume.user_id}/${resume.filename}`;
+  const storagePath = `resumes/${resume.user_id}/${resume.filename}`;
   try {
-    const object = await s3Client.send(
-      new GetObjectCommand({ Bucket: bucketName, Key: key })
-    );
-    const body = object.Body as
-      | { transformToByteArray?: () => Promise<Uint8Array> }
-      | undefined;
-    if (!body?.transformToByteArray) {
-      throw new Error('Unexpected S3 response body type');
+    const { data: blob, error } = await supabaseAdmin.storage
+      .from(STORAGE_BUCKET)
+      .download(storagePath);
+    if (error) {
+      if (error.message.toLowerCase().includes('not found') || error.statusCode === '404') {
+        return res.status(404).json({ error: 'Resume file not found in storage' });
+      }
+      throw error;
     }
-    const bytes = await body.transformToByteArray();
+    const bytes = Buffer.from(await blob.arrayBuffer());
 
-    res.setHeader('Content-Type', object.ContentType || 'application/octet-stream');
+    res.setHeader('Content-Type', blob.type || 'application/octet-stream');
     if (asDownload) {
       const safeName = resume.filename.replace(/[^\w.\-]/g, '_');
       res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
     }
-    return res.status(200).send(Buffer.from(bytes));
+    return res.status(200).send(bytes);
   } catch (error) {
-    if (errName(error) === 'NoSuchKey' || errHttpStatus(error) === 404) {
-      return res.status(404).json({ error: 'Resume file not found in storage' });
-    }
     console.error('Error streaming resume file:', error);
     return res.status(500).json({ error: 'Failed to fetch resume file' });
   }

@@ -9,21 +9,20 @@
 //      map (Firebase auth UIDs were previously the user id everywhere).
 //   3. Inserts public.users / jobs / jobcandidates / resumes / vendors rows,
 //      remapping every uid reference and job id reference.
-//   4. Copies S3 resume objects from resumes/<legacyUid>/ to resumes/<uuid>/
-//      (the API derives the S3 key from the current user_id).
-//   5. Imports company feedback from Firestore users/{uid}/resumes/feedback
+//   4. Imports company feedback from Firestore users/{uid}/resumes/feedback
 //      into public.company_feedback, and profileComplete flags.
 //
 // Usage:
-//   node api/scripts/migrate-to-supabase.js [--dry-run] [--skip-s3] [--skip-firestore]
+//   node api/scripts/migrate-to-supabase.js [--dry-run] [--skip-firestore]
 //
 // Env (required):  MONGODB_URI, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
-// Env (S3 copy):   AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET_NAME
 // Env (Firestore): FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, FIREBASE_CLIENT_EMAIL
 //
 // Notes:
 //   * Mongo _ids are 24-hex ObjectIds; Postgres ids are uuids, so jobs/resumes/
 //     candidates/vendors get NEW ids. Job links change once after migration.
+//   * Resume FILE objects are not copied: the app reads and writes files via
+//     Supabase Storage only, and historical S3-backed files are not migrated.
 //   * Re-running is mostly safe: users/jobs are checked before insert, resume
 //     duplicates (same user + hash) are skipped, candidates upsert by
 //     (job_id, filename).
@@ -34,7 +33,6 @@ const { createClient } = require('@supabase/supabase-js');
 
 const argv = new Set(process.argv.slice(2));
 const DRY_RUN = argv.has('--dry-run');
-const SKIP_S3 = argv.has('--skip-s3');
 const SKIP_FIRESTORE = argv.has('--skip-firestore');
 
 const warnings = [];
@@ -439,38 +437,7 @@ async function main() {
   console.log(`   candidates inserted=${candidatesInserted}`);
 
   // --------------------------------------------------------------- resumes
-  console.log(`6. Inserting resumes${SKIP_S3 ? ' (S3 copy skipped)' : ''}…`);
-  let s3Client = null;
-  let s3Copied = 0;
-  if (!SKIP_S3) {
-    const hasAws =
-      process.env.AWS_REGION &&
-      process.env.AWS_ACCESS_KEY_ID &&
-      process.env.AWS_SECRET_ACCESS_KEY &&
-      process.env.S3_BUCKET_NAME;
-    if (hasAws) {
-      const { S3Client, CopyObjectCommand } = require('@aws-sdk/client-s3');
-      s3Client = new S3Client({
-        region: process.env.AWS_REGION,
-        credentials: {
-          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-        },
-      });
-      s3Client.__copy = async (srcKey, destKey) => {
-        await s3Client.send(
-          new CopyObjectCommand({
-            Bucket: process.env.S3_BUCKET_NAME,
-            CopySource: `${process.env.S3_BUCKET_NAME}/${encodeURIComponent(srcKey).replace(/%2F/g, '/')}`,
-            Key: destKey,
-          })
-        );
-      };
-    } else {
-      warn('AWS env not set — S3 objects will NOT be copied to the new uid prefix');
-    }
-  }
-
+  console.log('6. Inserting resumes…');
   const resumeHashes = new Set();
   let resumesInserted = 0;
   for (const r of mongoResumes) {
@@ -501,19 +468,8 @@ async function main() {
       continue;
     }
     resumesInserted++;
-
-    // The API derives the S3 key as resumes/<user_id>/<filename> — move the
-    // object under the new uid so the owner can still open it.
-    if (s3Client && oldUid && newUid && oldUid !== newUid) {
-      try {
-        await s3Client.__copy(`resumes/${oldUid}/${r.filename}`, `resumes/${newUid}/${r.filename}`);
-        s3Copied++;
-      } catch (e) {
-        warn(`S3 copy failed for ${r.filename}: ${e.message}`);
-      }
-    }
   }
-  console.log(`   resumes inserted=${resumesInserted} s3Copied=${s3Copied}`);
+  console.log(`   resumes inserted=${resumesInserted}`);
 
   // --------------------------------------------------------------- vendors
   console.log('7. Inserting vendors…');
@@ -577,7 +533,7 @@ async function main() {
   console.log(`users rows:      ${userIdSet.size}`);
   console.log(`jobs:            ${jobMap.size}/${mongoJobs.length}`);
   console.log(`candidates:      ${candidatesInserted}`);
-  console.log(`resumes:         ${resumesInserted} (s3 copied: ${s3Copied})`);
+  console.log(`resumes:         ${resumesInserted}`);
   console.log(`vendors:         ${vendorsInserted}`);
   console.log(`feedback:        ${feedbackInserted}`);
   console.log(`warnings:        ${warnings.length}`);

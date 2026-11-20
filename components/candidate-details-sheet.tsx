@@ -16,6 +16,13 @@ import {
   Award,
   Briefcase,
   GraduationCap,
+  Github,
+  Star,
+  GitFork,
+  ExternalLink,
+  ShieldAlert,
+  Flame,
+  CheckCircle2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -271,17 +278,22 @@ export function CandidateDetailsSheet({
             <TabsContent value="overview" className="mt-0 space-y-6">
               {/* Match Score */}
               <div className="space-y-2">
-                <h3 className="font-semibold text-lg">Match Score</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-lg">Evaluation Score</h3>
+                  <Badge variant="outline" className="text-xs font-mono">
+                    HackerRank Rubric Model
+                  </Badge>
+                </div>
                 <div className="flex items-center gap-4">
                   <div className="text-4xl font-bold text-primary">{candidate.matchAnalysis.matchPercentage}%</div>
                   <div className="flex-1">
                     <Progress value={candidate.matchAnalysis.matchPercentage} className="h-2 mb-2" />
                     <div className="flex justify-between text-sm">
-                      <span className={candidate.matchAnalysis.experienceMatch ? "text-green-600" : "text-yellow-600"}>
+                      <span className={candidate.matchAnalysis.experienceMatch ? "text-green-600 dark:text-green-400" : "text-yellow-600 dark:text-yellow-400"}>
                         <Briefcase className="w-3.5 h-3.5 inline mr-1" />
                         Experience: {candidate.matchAnalysis.experienceMatch ? "Match" : "Partial"}
                       </span>
-                      <span className={candidate.matchAnalysis.educationMatch ? "text-green-600" : "text-yellow-600"}>
+                      <span className={candidate.matchAnalysis.educationMatch ? "text-green-600 dark:text-green-400" : "text-yellow-600 dark:text-yellow-400"}>
                         <GraduationCap className="w-3.5 h-3.5 inline mr-1" />
                         Education: {candidate.matchAnalysis.educationMatch ? "Match" : "Partial"}
                       </span>
@@ -289,6 +301,137 @@ export function CandidateDetailsSheet({
                   </div>
                 </div>
               </div>
+
+              {/* HackerRank-style Evidence-Backed Rubric Breakdown */}
+              {candidate.matchAnalysis.categoryBreakdown && candidate.matchAnalysis.categoryBreakdown.length > 0 && (
+                <>
+                  <Separator />
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold text-base flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-primary" />
+                        Evidence-Backed Rubric Breakdown
+                      </h3>
+                    </div>
+                    <div className="space-y-2.5">
+                      {candidate.matchAnalysis.categoryBreakdown.map((cat, idx) => (
+                        <div key={idx} className="bg-muted/40 p-3 rounded-lg border text-sm space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-foreground">{cat.label}</span>
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary">
+                              {cat.score} / {cat.maxScore} pts
+                            </span>
+                          </div>
+                          <Progress value={(cat.score / cat.maxScore) * 100} className="h-1.5" />
+                          <p className="text-xs text-muted-foreground italic leading-relaxed pt-1">
+                            "{cat.evidence}"
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Bonus Signals */}
+              {candidate.matchAnalysis.bonuses && candidate.matchAnalysis.bonuses.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                    <Flame className="w-3.5 h-3.5 text-orange-500" />
+                    Special Bonus Points Awarded
+                  </h4>
+                  <div className="flex flex-wrap gap-2">
+                    {candidate.matchAnalysis.bonuses.map((b, idx) => (
+                      <Badge key={idx} variant="secondary" className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 py-1">
+                        +{b.points} pts: {b.label} ({b.reason})
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Risk Flags / Missing Requirements */}
+              {candidate.matchAnalysis.flagsOrGaps && candidate.matchAnalysis.flagsOrGaps.length > 0 && (
+                <div className="space-y-2 bg-destructive/5 p-3 rounded-lg border border-destructive/20">
+                  <h4 className="text-xs font-semibold text-destructive uppercase tracking-wider flex items-center gap-1">
+                    <ShieldAlert className="w-3.5 h-3.5 text-destructive" />
+                    Screening Risks & Missing Signals
+                  </h4>
+                  <ul className="text-xs text-muted-foreground space-y-1 list-disc pl-4">
+                    {candidate.matchAnalysis.flagsOrGaps.map((flag, idx) => (
+                      <li key={idx}>{flag}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* GitHub Signal Enrichment */}
+              {candidate.matchAnalysis.githubEnrichment && (
+                <>
+                  <Separator />
+                  <div className="space-y-3 bg-muted/20 p-3.5 rounded-lg border">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Github className="w-4 h-4 text-foreground" />
+                        <span className="font-semibold text-sm">GitHub Telemetry</span>
+                        <a
+                          href={candidate.matchAnalysis.githubEnrichment.profileUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-0.5"
+                        >
+                          @{candidate.matchAnalysis.githubEnrichment.username}
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {candidate.matchAnalysis.githubEnrichment.publicReposCount} repos • {candidate.matchAnalysis.githubEnrichment.followers} followers
+                      </span>
+                    </div>
+
+                    {candidate.matchAnalysis.githubEnrichment.topLanguages.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs text-muted-foreground mr-1">Languages:</span>
+                        {candidate.matchAnalysis.githubEnrichment.topLanguages.map((lang, idx) => (
+                          <Badge key={idx} variant="outline" className="text-xs font-normal">
+                            {lang}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+
+                    {candidate.matchAnalysis.githubEnrichment.featuredRepos.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-xs font-medium text-muted-foreground">Featured Repositories:</span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {candidate.matchAnalysis.githubEnrichment.featuredRepos.map((repo, idx) => (
+                            <a
+                              key={idx}
+                              href={repo.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="p-2 rounded bg-background border hover:border-primary/50 transition-colors text-xs space-y-1 block"
+                            >
+                              <div className="flex items-center justify-between font-medium text-primary">
+                                <span className="truncate">{repo.name}</span>
+                                <div className="flex items-center gap-1 text-muted-foreground text-[10px]">
+                                  <Star className="w-2.5 h-2.5 text-yellow-500 fill-yellow-500" />
+                                  {repo.stars}
+                                </div>
+                              </div>
+                              {repo.description && (
+                                <p className="text-[11px] text-muted-foreground line-clamp-1">
+                                  {repo.description}
+                                </p>
+                              )}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
 
               <Separator />
 

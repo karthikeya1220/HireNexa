@@ -7,9 +7,6 @@ import { motion, AnimatePresence } from "framer-motion"
 
 import { Upload, FileText, X, FileUp, CloudUpload, Clock, Trash2 } from "lucide-react"
 
-// import { s3Client, bucketName } from "@/AWSConfig"
-// import { PutObjectCommand } from "@aws-sdk/client-s3"
-
 import { useAuth } from "@/context/auth-context"
 import { generateUUID } from "@/utils/generate-id"
 import { useToast } from "@/hooks/use-toast"
